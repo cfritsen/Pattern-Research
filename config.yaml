@@ -1,4 +1,4 @@
-universe_csv: universe_sp500_top10.csv
+index: sp500
 data_dir: data
 report_dir: reports
 start_date: "1996-01-01"
@@ -6,3 +6,5 @@ index_proxy: SPY          # open item: SPY is my default pick
 use_stooq_fallback: true
 jump_threshold: 0.25      # flag daily moves bigger than 25%
 pause_seconds: 0.5        # be polite to the data source
+start_overrides:
+  JCI: "2007-07-02"   # earlier history is Tyco-era, not comparable

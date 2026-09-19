@@ -1,35 +1,27 @@
 import pandas as pd
 import pytest
-from patternlab.universe import load_universe, top10_flag
-
-HEADER = "ticker,company,data_ticker,first_top10_year,last_top10_year,share_class_note,data_status\n"
-
-
-def write(tmp_path, body):
-    p = tmp_path / "u.csv"
-    p.write_text(HEADER + body)
-    return str(p)
+from patternlab.universe import in_index_flag
+from patternlab.universe_fetch import to_data_ticker, validate_snapshot
 
 
-def test_blank_data_ticker_falls_back(tmp_path):
-    df = load_universe(write(tmp_path, "AAA,Aaa Co,,2000,2005,,ok\n"))
-    assert df.loc[0, "data_ticker"] == "AAA"
+def test_flag_starts_on_add_date():
+    dates = pd.bdate_range("2019-12-25", "2020-01-10")
+    f = in_index_flag(dates, pd.Timestamp("2020-01-02"))
+    assert not f["2019-12-31"]
+    assert f["2020-01-02"]
 
 
-def test_bad_status_rejected(tmp_path):
-    with pytest.raises(ValueError):
-        load_universe(write(tmp_path, "AAA,Aaa Co,,2000,2005,,maybe\n"))
+def test_missing_add_date_treated_as_member():
+    dates = pd.bdate_range("2000-01-03", "2000-01-14")
+    assert in_index_flag(dates, pd.NaT).all()
 
 
-def test_years_reversed_rejected(tmp_path):
-    with pytest.raises(ValueError):
-        load_universe(write(tmp_path, "AAA,Aaa Co,,2005,2000,,ok\n"))
+def test_ticker_conversion():
+    assert to_data_ticker("BRK.B") == "BRK-B"
+    assert to_data_ticker(" AAPL ") == "AAPL"
 
 
-def test_flag_starts_year_after_first_ranking():
-    dates = pd.bdate_range("1999-12-01", "2003-01-31")
-    f = top10_flag(dates, first_year=2000, last_year=2001)
-    assert not f["2000-12-29"]          # ranked at end of 2000, not flagged yet
-    assert f["2001-01-02"]              # flagged from the next year
-    assert f["2002-12-31"]              # last year + 1 still flagged
-    assert not f["2003-01-02"]
+def test_validate_rejects_short_table():
+    df = pd.DataFrame({"ticker": [f"T{i}" for i in range(50)]})
+    with pytest.raises(RuntimeError):
+        validate_snapshot(df)

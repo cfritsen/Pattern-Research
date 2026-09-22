@@ -8,3 +8,6 @@ jump_threshold: 0.25      # flag daily moves bigger than 25%
 pause_seconds: 0.5        # be polite to the data source
 start_overrides:
   JCI: "2007-07-02"   # earlier history is Tyco-era, not comparable
+horizon: 5
+move_atr: 1.0
+discovery_frac: 0.70

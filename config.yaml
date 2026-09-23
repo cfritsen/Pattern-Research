@@ -11,3 +11,5 @@ start_overrides:
 horizon: 5
 move_atr: 1.0
 discovery_frac: 0.70
+corr_prune_threshold: 0.7
+test_all_buckets: false   # true = full 25-combo grid per pair (much slower)

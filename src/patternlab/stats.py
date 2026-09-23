@@ -6,23 +6,41 @@ RNG_SEED = 12345
 N_BOOTSTRAP = 2000
 
 
-def thin_non_overlapping(dates, ticker, horizon: int) -> np.ndarray:
-    """Boolean mask keeping the first occurrence in each run, then skipping any
-    later occurrence for the same ticker within `horizon` trading bars of the
-    last kept one. Addresses overlapping-forward-window inflation (Section 7)."""
-    dates_arr = np.asarray(dates)
-    ticker_arr = np.asarray(ticker)
-    n = len(ticker_arr)
-    df = pd.DataFrame({"date": dates_arr, "ticker": ticker_arr})   # fresh 0..n-1 index
-    keep = np.zeros(n, dtype=bool)
+def thin_non_overlapping(bar_pos, ticker, horizon: int) -> np.ndarray:
+    """Boolean mask keeping the first occurrence per ticker, then any later
+    occurrence whose bar_pos is at least `horizon` actual trading bars after
+    the last kept occurrence's bar_pos (not `horizon` OCCURRENCES later --
+    that was a bug in the original version: it under-thinned occurrences that
+    followed shortly, by occurrence count, after a separate burst elsewhere
+    in the ticker's history, even when the two were far apart in real time)."""
+    pos = np.asarray(bar_pos)
+    tick = np.asarray(ticker)
+    df = pd.DataFrame({"pos": pos, "ticker": tick})
+    keep = np.zeros(len(tick), dtype=bool)
     for _, idx in df.groupby("ticker").groups.items():
         idx = np.asarray(idx)
+        order = idx[np.argsort(pos[idx])]
         last_kept_pos = -10**9
-        for rank, i in enumerate(idx):
-            if rank == 0 or rank - last_kept_pos >= horizon:
+        for i in order:
+            if pos[i] - last_kept_pos >= horizon:
                 keep[i] = True
-                last_kept_pos = rank
+                last_kept_pos = pos[i]
     return keep
+
+
+def bh_qvalues(pvals: np.ndarray) -> np.ndarray:
+    """Benjamini-Hochberg adjusted p-values (q-values), monotone by construction."""
+    n = len(pvals)
+    if n == 0:
+        return np.array([])
+    order = np.argsort(pvals)
+    ranked = pvals[order]
+    raw_q = ranked * n / np.arange(1, n + 1)
+    q_sorted = np.minimum.accumulate(raw_q[::-1])[::-1]
+    q_sorted = np.clip(q_sorted, 0, 1)
+    out = np.empty(n)
+    out[order] = q_sorted
+    return out
 
 
 def cluster_bootstrap_pvalue(values: np.ndarray, dates: np.ndarray, baseline: float,

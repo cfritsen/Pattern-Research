@@ -44,22 +44,56 @@ CREATE TABLE IF NOT EXISTS pattern_results_pooled (
 );
 CREATE INDEX IF NOT EXISTS idx_results_run ON pattern_results_pooled(run_id);
 CREATE INDEX IF NOT EXISTS idx_results_pattern ON pattern_results_pooled(pattern_id);
+ALTER TABLE runs ADD COLUMN n_conditions INTEGER;
+
+CREATE TABLE IF NOT EXISTS feature_correlations (
+    run_id INTEGER NOT NULL REFERENCES runs(run_id),
+    feature_a TEXT NOT NULL,
+    feature_b TEXT NOT NULL,
+    spearman_rho REAL,
+    pruned INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pattern_results_by_stock (
+    pattern_id INTEGER NOT NULL REFERENCES patterns(pattern_id),
+    run_id INTEGER NOT NULL REFERENCES runs(run_id),
+    ticker TEXT NOT NULL,
+    view TEXT NOT NULL,
+    horizon INTEGER NOT NULL,
+    split TEXT NOT NULL,
+    n INTEGER NOT NULL,
+    mean_fwd_return REAL,
+    hit_rate REAL,
+    effect REAL
+);
 """
 
 
 def connect(cfg: dict) -> sqlite3.Connection:
     path = Path(cfg["data_dir"]) / "results.db"
     conn = sqlite3.connect(path)
-    conn.executescript(SCHEMA)
+    for stmt in SCHEMA.split(";"):
+        stmt = stmt.strip()
+        if not stmt:
+            continue
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # table/column already exists
+    try:
+        conn.execute("ALTER TABLE pattern_results_pooled ADD COLUMN overlap_ratio REAL")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
     return conn
 
 
 def insert_run(conn: sqlite3.Connection, settings: dict, data_version: str, universe_snapshot: str) -> int:
     from datetime import datetime, timezone
     cur = conn.execute(
-        "INSERT INTO runs (settings_json, created_at, data_version, universe_snapshot) VALUES (?, ?, ?, ?)",
+        "INSERT INTO runs (settings_json, created_at, data_version, universe_snapshot, n_conditions) VALUES (?, ?, ?, ?, ?)",
         (json.dumps(settings, sort_keys=True), datetime.now(timezone.utc).isoformat(timespec="seconds"),
-         data_version, universe_snapshot))
+         data_version, universe_snapshot, settings.get("n_conditions")))
     conn.commit()
     return cur.lastrowid
 

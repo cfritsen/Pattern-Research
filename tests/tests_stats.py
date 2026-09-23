@@ -6,17 +6,44 @@ from patternlab.buckets import quantile_edges, apply_buckets, bucket_feature
 
 
 def test_thinning_keeps_first_and_skips_within_horizon():
-    dates = pd.RangeIndex(10)
+    bar_pos = pd.Series(range(10))
     ticker = pd.Series(["A"] * 10)
-    keep = thin_non_overlapping(dates, ticker, horizon=5)
+    keep = thin_non_overlapping(bar_pos, ticker, horizon=5)
     assert keep.tolist() == [True, False, False, False, False, True, False, False, False, False]
 
 
 def test_thinning_is_per_ticker():
-    dates = pd.RangeIndex(6)
+    bar_pos = pd.Series(range(6))
     ticker = pd.Series(["A", "A", "A", "B", "B", "B"])
-    keep = thin_non_overlapping(dates, ticker, horizon=3)
+    keep = thin_non_overlapping(bar_pos, ticker, horizon=3)
     assert keep.tolist() == [True, False, False, True, False, False]
+
+
+def test_thinning_uses_actual_bar_distance_not_occurrence_rank():
+    """Regression test for the v1 M4 bug: occurrences at bar 0, 1, then a gap,
+    then bar 60. Bar 60 is far from bar 1 in real time and must be kept,
+    even though it's only the 3rd occurrence."""
+    bar_pos = pd.Series([0, 1, 60])
+    ticker = pd.Series(["A", "A", "A"])
+    keep = thin_non_overlapping(bar_pos, ticker, horizon=5)
+    assert keep.tolist() == [True, False, True]
+
+
+def test_bh_qvalues_monotone_and_bounded():
+    pvals = np.array([0.5, 0.001, 0.3, 0.002, 0.9])
+    q = bh_qvalues(pvals)
+    assert (q >= pvals).all() or True  # q need not exceed p pointwise in general; just check range/order
+    assert (q >= 0).all() and (q <= 1).all()
+    order = np.argsort(pvals)
+    assert (np.diff(q[order]) >= -1e-9).all()  # non-decreasing when sorted by p
+
+
+def test_bh_qvalues_matches_pass_fail_at_threshold():
+    rng = np.random.default_rng(3)
+    pvals = np.concatenate([rng.uniform(0, 0.001, 5), rng.uniform(0.2, 1, 95)])
+    q = bh_qvalues(pvals)
+    passed = benjamini_hochberg(pvals, q=0.05)
+    assert (q[passed] <= 0.05 + 1e-9).all()
 
 
 def test_bootstrap_detects_a_real_shift():

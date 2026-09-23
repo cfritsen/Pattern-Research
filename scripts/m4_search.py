@@ -7,69 +7,7 @@ from patternlab.universe_fetch import get_universe
 from patternlab.buckets import bucket_feature, CATEGORICAL
 from patternlab.stats import thin_non_overlapping, cluster_bootstrap_pvalue, benjamini_hochberg, breadth
 from patternlab.db import connect, insert_run, get_or_create_pattern, insert_result
-
-MIN_OCCURRENCES = 300
-MIN_PER_STOCK = 30
-COST = 0.001
-
-
-def load_panel(cfg: dict, uni: pd.DataFrame) -> pd.DataFrame:
-    """One row per (ticker, date): the features needed for search, plus outcome/split
-    columns and the ticker/date identity needed for clustering and breadth."""
-    h0 = cfg["horizon"]
-    feat_dir = Path(cfg["data_dir"]) / "features"
-    out_dir = Path(cfg["data_dir"]) / "outcomes"
-    feature_cols = [c for c in pd.read_parquet(feat_dir / f"{uni['data_ticker'].iloc[0]}.parquet").columns
-                    if c not in ("tradable", "in_index")]
-    frames = []
-    for t in uni["data_ticker"]:
-        f = pd.read_parquet(feat_dir / f"{t}.parquet")
-        o = pd.read_parquet(out_dir / f"{t}.parquet", columns=[f"fwd_ret_{h0}", f"split_{h0}",
-                                                                "up_hit", "down_hit", "tradable", "in_index"])
-        df = f[feature_cols].join(o)
-        df["ticker"] = t
-        frames.append(df)
-    panel = pd.concat(frames)
-    panel = panel[panel["tradable"]].copy()
-    panel["date"] = panel.index
-    panel["year"] = panel["date"].dt.year
-    panel.reset_index(drop=True, inplace=True)
-    return panel, feature_cols
-
-
-def evaluate_condition(sub: pd.DataFrame, market: pd.DataFrame, view: str, h0: int, cost: float) -> dict | None:
-    """sub = rows matching one bucket. Runs the M4 statistical pipeline on it."""
-    n = len(sub)
-    if n < MIN_OCCURRENCES:
-        return None
-    keep = thin_non_overlapping(sub["date"], sub["ticker"], h0)
-    thin = sub[keep]
-    if thin["ticker"].value_counts().max() and (thin.groupby("ticker").size() >= MIN_PER_STOCK).sum() == 0:
-        pass  # per-stock minimum is a breakdown filter for M5/by-stock views, not a pooled gate here
-
-    fwd = thin[f"fwd_ret_{h0}"].astype(float)
-    dates_np = thin["date"].to_numpy()
-    stock_baseline = market.reindex(thin["date"])["fwd_ret"].to_numpy()  # date-matched baseline
-    excess = fwd.to_numpy() - stock_baseline
-    excess = excess[~np.isnan(excess)]
-    if len(excess) < MIN_OCCURRENCES // 2:
-        return None
-
-    raw_baseline_mean = float(market["fwd_ret"].mean())
-    p, lo, hi = cluster_bootstrap_pvalue(excess, dates_np[:len(excess)], baseline=0.0)
-    s_frac, y_frac = breadth(fwd.to_numpy(), thin["ticker"].to_numpy(), thin["year"].to_numpy(), raw_baseline_mean)
-
-    mh = thin["up_hit"].notna()
-    return dict(
-        n_occurrences=int(n), n_thinned=int(len(thin)),
-        mean_fwd_return=float(fwd.mean()), baseline_mean=raw_baseline_mean,
-        hit_rate=float(thin.loc[mh, "up_hit"].mean()) if mh.any() else float("nan"),
-        baseline_hit_rate=float("nan"),
-        effect=float(fwd.mean()) - raw_baseline_mean,
-        p_value=p, ci_low=lo, ci_high=hi,
-        breadth_stocks=s_frac, breadth_years=y_frac,
-        beats_cost=abs(float(fwd.mean()) - raw_baseline_mean) > cost,
-    )
+from patternlab.search import load_panel, evaluate_condition, MIN_OCCURRENCES, COST
 
 
 def main() -> None:

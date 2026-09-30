@@ -66,6 +66,14 @@ CREATE TABLE IF NOT EXISTS pattern_results_by_stock (
     hit_rate REAL,
     effect REAL
 );
+
+CREATE TABLE IF NOT EXISTS feature_bucket_edges (
+    feature TEXT NOT NULL,
+    edge_index INTEGER NOT NULL,
+    edge_value REAL NOT NULL,
+    PRIMARY KEY (feature, edge_index)
+);
+
 """
 
 
@@ -80,10 +88,11 @@ def connect(cfg: dict) -> sqlite3.Connection:
             conn.execute(stmt)
         except sqlite3.OperationalError:
             pass  # table/column already exists
-    try:
-        conn.execute("ALTER TABLE pattern_results_pooled ADD COLUMN overlap_ratio REAL")
-    except sqlite3.OperationalError:
-        pass
+    for col in ("overlap_ratio", "top3_year_share", "mean_excl_top3"):
+        try:
+            conn.execute(f"ALTER TABLE pattern_results_pooled ADD COLUMN {col} REAL")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     return conn
 

@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from patternlab.config import load_config, ensure_dirs
+from patternlab.config import load_config, ensure_dirs, manifest_path
 from patternlab.universe_fetch import get_universe
 from patternlab.buckets import CATEGORICAL
 from patternlab.search import load_panel, build_buckets, evaluate_condition
@@ -42,7 +42,7 @@ def main() -> None:
                 pairs_to_test.append(pair)
     pairs_to_test = sorted({tuple(sorted(p)) for p in pairs_to_test})
 
-    manifest = json.loads((Path(cfg["data_dir"]) / "manifest.json").read_text())
+    manifest = json.loads(manifest_path(cfg).read_text())
     conn = connect(cfg)
     run_id = insert_run(conn, {"horizon": h0, "move_atr": cfg["move_atr"], "n_conditions": 2,
                                "corr_prune_threshold": corr_threshold, "extremes_only": extremes_only},
@@ -81,7 +81,7 @@ def main() -> None:
                         sub = panel[mask_ab & smask]
                         market_sub = market_by_split[split_name]
                         tested += 1
-                        res = evaluate_condition(sub, market_sub, view, h0, cost)
+                        res = evaluate_condition(sub, market_sub, view, h0)
                         if res is None:
                             continue
                         scope = vmask & smask

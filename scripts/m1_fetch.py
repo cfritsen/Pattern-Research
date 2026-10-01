@@ -1,10 +1,9 @@
 import argparse
 import json
 import time
-from pathlib import Path
 import pandas as pd
-from patternlab.config import load_config, ensure_dirs
-from patternlab.universe_fetch import get_universe
+from patternlab.config import load_config, ensure_dirs, manifest_path, report_dir_for
+from patternlab.universe_fetch import get_universe, get_index_proxy
 from patternlab.fetch import get_prices, data_version
 from patternlab.quality import check_prices, failed_row
 
@@ -16,10 +15,11 @@ def main(refresh: bool, refresh_universe: bool, limit: int) -> None:
     snap = str(uni["snapshot_date"].iloc[0])
     print(f"Universe: {len(uni)} constituents, snapshot {snap}")
 
+    proxy = get_index_proxy(cfg["index"])
     targets = list(dict.fromkeys(uni["data_ticker"]))
     if limit:
         targets = targets[:limit]
-    targets = list(dict.fromkeys(targets + [cfg["index_proxy"]]))
+    targets = list(dict.fromkeys(targets + [proxy]))
 
     rows, manifest = [], {}
     for t in targets:
@@ -35,16 +35,16 @@ def main(refresh: bool, refresh_universe: bool, limit: int) -> None:
             print(f"FAIL  {t}: {e}")
 
     report = pd.DataFrame(rows)
-    out = Path(cfg["report_dir"]) / "data_quality.csv"
-    report.to_csv(out, index=False)
+    out = report_dir_for(cfg)
+    report.to_csv(out / "data_quality.csv", index=False)
 
     version = data_version(manifest)
-    (Path(cfg["data_dir"]) / "manifest.json").write_text(json.dumps(
+    manifest_path(cfg).write_text(json.dumps(
         {"data_version": version, "universe_snapshot": snap, "tickers": manifest}, indent=2))
 
     n_bad = int((report["status"] != "fetched").sum())
     print(f"\nData version: {version}  |  universe snapshot: {snap}")
-    print(f"Quality report: {out}")
+    print(f"Quality report: {out / 'data_quality.csv'}")
     if n_bad:
         print(f"WARNING: {n_bad} ticker(s) failed. See the report.")
 

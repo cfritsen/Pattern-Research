@@ -12,7 +12,6 @@ NEEDED = ["Symbol", "Security", "GICS Sector", "Date added"]
 
 
 def to_data_ticker(symbol: str) -> str:
-    """Wikipedia writes BRK.B; yfinance wants BRK-B."""
     return symbol.strip().replace(".", "-")
 
 
@@ -42,6 +41,31 @@ def fetch_sp500() -> pd.DataFrame:
 
 
 PROVIDERS = {"sp500": fetch_sp500}   # add other indices or a paid provider here
+
+# The benchmark ticker used per index for relative-strength features (M2).
+# Add an entry here whenever a new index loader is added to PROVIDERS.
+INDEX_PROXIES = {
+    "sp500": "SPY",
+    # "nasdaq100": "QQQ",   # example for when that loader is added
+    # "dow": "DIA",         # example for when that loader is added
+}
+
+# Fixed reference used ONLY for the discovery/confirm date-split boundary
+# (M3). Deliberately NOT index-derived: pinning the split to one ticker,
+# regardless of which index is active, keeps data/outcomes/ files identical
+# (and therefore shareable) across indices -- otherwise the same historical
+# bar could land in "discovery" under one index and "confirm" under
+# another, depending only on which index happened to be configured.
+MARKET_REFERENCE = "SPY"
+
+
+def get_index_proxy(index: str) -> str:
+    try:
+        return INDEX_PROXIES[index]
+    except KeyError:
+        raise ValueError(
+            f"No proxy ticker registered for index {index!r}. "
+            f"Add it to INDEX_PROXIES in universe_fetch.py.")
 
 
 def get_universe(cfg: dict, refresh: bool = False) -> pd.DataFrame:

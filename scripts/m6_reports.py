@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from patternlab.config import load_config, ensure_dirs
+from patternlab.config import load_config, ensure_dirs, report_dir_for
 from patternlab.db import connect
 from patternlab.humanize import humanize_pattern_view, humanize_stock_view
 
@@ -238,7 +238,7 @@ def main() -> None:
     wdf = pattern_view(context, args.top, worst=True)
     sdf = stock_view(conn, args.ticker, context, 5) if args.ticker else pd.DataFrame()
 
-    out_dir = Path(cfg["report_dir"])
+    out_dir = report_dir_for(cfg)
     pdf.to_csv(out_dir / "pattern_view.csv", index=False)
     wdf.to_csv(out_dir / "pattern_view_worst.csv", index=False)
     if args.ticker:

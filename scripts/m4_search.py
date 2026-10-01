@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from patternlab.config import load_config, ensure_dirs
+from patternlab.config import load_config, ensure_dirs, manifest_path
 from patternlab.universe_fetch import get_universe
 from patternlab.buckets import bucket_feature, CATEGORICAL
 from patternlab.stats import thin_non_overlapping, cluster_bootstrap_pvalue, benjamini_hochberg, breadth
@@ -19,7 +19,7 @@ def main() -> None:
     is_disc = panel[f"split_{h0}"] == 0
     is_conf = panel[f"split_{h0}"] == 1
 
-    manifest = json.loads((Path(cfg["data_dir"]) / "manifest.json").read_text())
+    manifest = json.loads(manifest_path(cfg).read_text())
     conn = connect(cfg)
     run_id = insert_run(conn, {"horizon": h0, "move_atr": cfg["move_atr"], "n_conditions": 1},
                         manifest["data_version"], manifest["universe_snapshot"])
@@ -45,7 +45,7 @@ def main() -> None:
                     market_sub = panel[vmask & smask][[f"fwd_ret_{h0}", "date"]].rename(
                         columns={f"fwd_ret_{h0}": "fwd_ret"}).groupby("date").mean()
                     tested += 1
-                    r = evaluate_condition(sub, market_sub, view, h0, cfg.get("cost", COST))
+                    r = evaluate_condition(sub, market_sub, view, h0)
                     if r is None:
                         continue
                     desc = f"{col} in bucket {label}"

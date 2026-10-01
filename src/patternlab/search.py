@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from patternlab.buckets import bucket_feature
+from patternlab.universe import in_index_flag
 from patternlab.stats import thin_non_overlapping, cluster_bootstrap_pvalue, breadth
 
 MIN_OCCURRENCES = 300
@@ -15,19 +16,21 @@ def load_panel(cfg: dict, uni: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     feat_dir = Path(cfg["data_dir"]) / "features"
     out_dir = Path(cfg["data_dir"]) / "outcomes"
     feature_cols = [c for c in pd.read_parquet(feat_dir / f"{uni['data_ticker'].iloc[0]}.parquet").columns
-                    if c not in ("tradable", "in_index")]
+                    if c != "tradable"]
+    added_by_ticker = uni.set_index("data_ticker")["date_added"]
     frames = []
     for t in uni["data_ticker"]:
         f = pd.read_parquet(feat_dir / f"{t}.parquet")
         o = pd.read_parquet(out_dir / f"{t}.parquet", columns=[f"fwd_ret_{h0}", f"split_{h0}",
-                                                                "up_hit", "down_hit", "tradable", "in_index"])
+                                                                "up_hit", "down_hit", "tradable"])
         df = f[feature_cols].join(o)
         df["ticker"] = t
+        # in_index is applied fresh here, per the active universe's own join
+        # dates -- not stored in the shared feature/outcome files, so the
+        # same files work correctly no matter which index is loaded.
+        df["in_index"] = in_index_flag(df.index, added_by_ticker.get(t)).to_numpy()
         frames.append(df)
     panel = pd.concat(frames)
-    # bar_pos = position in each ticker's full bar sequence, computed BEFORE the
-    # tradable filter so it matches how forward-return horizons were counted in
-    # outcomes.py (which runs on the full cleaned series, not just tradable bars).
     panel["bar_pos"] = panel.groupby("ticker").cumcount()
     panel = panel[panel["tradable"]].copy()
     panel["date"] = panel.index
@@ -47,7 +50,7 @@ def build_buckets(panel: pd.DataFrame, feature_cols: list[str], is_disc: pd.Seri
     return pd.DataFrame(frames), edges
 
 
-def evaluate_condition(sub: pd.DataFrame, market: pd.DataFrame, view: str, h0: int, cost: float) -> dict | None:
+def evaluate_condition(sub: pd.DataFrame, market: pd.DataFrame, view: str, h0: int) -> dict | None:
     n = len(sub)
     if n < MIN_OCCURRENCES:
         return None

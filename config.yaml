@@ -1,15 +1,28 @@
+# ── Universe ──────────────────────────────────────────────────────────
+# Which index's current constituents to use (auto-fetched, see Section 4).
+# Must match a registered loader in patternlab/universe_fetch.py. The
+# benchmark/proxy ticker (SPY for sp500, etc.) is derived automatically from
+# this -- it's not a separate setting.
 index: sp500
+
+# ── Storage locations ─────────────────────────────────────────────────
 data_dir: data
 report_dir: reports
+
+# ── Price data ───────────────────────────────────────────────────────
 start_date: "1996-01-01"
-index_proxy: SPY          # open item: SPY is my default pick
 use_stooq_fallback: true
-jump_threshold: 0.25      # flag daily moves bigger than 25%
-pause_seconds: 0.5        # be polite to the data source
+jump_threshold: 0.25
+pause_seconds: 0.5
 start_overrides:
   JCI: "2007-07-02"   # earlier history is Tyco-era, not comparable
+
+# ── Outcomes ─────────────────────────────────────────────────────────
 horizon: 5
 move_atr: 1.0
 discovery_frac: 0.70
+cost: 0.001
+
+# ── 2-condition search (M5) ─────────────────────────────────────────
 corr_prune_threshold: 0.7
-test_all_buckets: false   # true = full 25-combo grid per pair (much slower)
+test_all_buckets: false

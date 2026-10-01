@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS feature_bucket_edges (
 
 
 def connect(cfg: dict) -> sqlite3.Connection:
-    path = Path(cfg["data_dir"]) / "results.db"
+    path = Path(cfg["data_dir"]) / f"results_{cfg['index']}.db"
     conn = sqlite3.connect(path)
     for stmt in SCHEMA.split(";"):
         stmt = stmt.strip()

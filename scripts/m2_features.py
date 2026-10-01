@@ -1,10 +1,8 @@
 import json
 import time
 from pathlib import Path
-import pandas as pd
-from patternlab.config import load_config, ensure_dirs
-from patternlab.universe_fetch import get_universe
-from patternlab.universe import in_index_flag
+from patternlab.config import load_config, ensure_dirs, manifest_path
+from patternlab.universe_fetch import get_universe, get_index_proxy
 from patternlab.clean import load_clean
 from patternlab.features import compute_features
 
@@ -16,25 +14,25 @@ def main() -> None:
     out_dir = Path(cfg["data_dir"]) / "features"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    idx_df, _ = load_clean(cfg["index_proxy"], cfg)
+    proxy = get_index_proxy(cfg["index"])
+    idx_df, _ = load_clean(proxy, cfg)
     idx_close = idx_df["adj_close"]
 
     t0, done, failed, total_rows, complete_rows = time.time(), 0, [], 0, 0
-    for t, added in zip(uni["data_ticker"], uni["date_added"]):
+    for t in uni["data_ticker"]:
         try:
             df, _ = load_clean(t, cfg)
             f = compute_features(df, idx_close)
-            f["in_index"] = in_index_flag(df.index, added).to_numpy()
             f32 = f.select_dtypes("float64").columns
             f[f32] = f[f32].astype("float32")
             f.to_parquet(out_dir / f"{t}.parquet")
             done += 1
             total_rows += len(f)
-            complete_rows += int(f.drop(columns=["tradable", "in_index"]).notna().all(axis=1).sum())
+            complete_rows += int(f.drop(columns=["tradable"]).notna().all(axis=1).sum())
         except Exception as e:
             failed.append((t, str(e)))
 
-    manifest = json.loads((Path(cfg["data_dir"]) / "manifest.json").read_text())
+    manifest = json.loads(manifest_path(cfg).read_text())
     meta = {"price_data_version": manifest["data_version"],
             "universe_snapshot": manifest["universe_snapshot"],
             "tickers": done, "rows": total_rows, "complete_rows": complete_rows}

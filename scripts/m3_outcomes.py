@@ -3,8 +3,9 @@ from collections import Counter
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from patternlab.config import load_config, ensure_dirs
-from patternlab.universe_fetch import get_universe
+from patternlab.config import load_config, ensure_dirs, report_dir_for
+from patternlab.universe_fetch import get_universe, MARKET_REFERENCE
+from patternlab.universe import in_index_flag
 from patternlab.clean import load_clean
 from patternlab.outcomes import HORIZONS, compute_outcomes, split_labels, split_cutoff, hit_flags
 
@@ -18,37 +19,33 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     h0, move = cfg["horizon"], cfg["move_atr"]
 
-    idx_df, _ = load_clean(cfg["index_proxy"], cfg)
+    idx_df, _ = load_clean(MARKET_REFERENCE, cfg)
     cutoff = split_cutoff(idx_df.index[0], idx_df.index[-1], cfg["discovery_frac"])
     print(f"Discovery: before {cutoff.date()}   Confirm: {cutoff.date()} onward")
 
+    added_by_ticker = uni.set_index("data_ticker")["date_added"]
     frames, failed, coverage = [], [], Counter()
     for t in uni["data_ticker"]:
         try:
             df, _ = load_clean(t, cfg)
-            f = pd.read_parquet(feat_dir / f"{t}.parquet", columns=["atr_pct", "tradable", "in_index"])
+            f = pd.read_parquet(feat_dir / f"{t}.parquet", columns=["atr_pct", "tradable"])
             if not f.index.equals(df.index):
                 raise ValueError(f"feature/price date mismatch: "
                                   f"features {f.index[0].date()}-{f.index[-1].date()} ({len(f)} rows), "
                                   f"prices {df.index[0].date()}-{df.index[-1].date()} ({len(df)} rows)")
             o = pd.concat([compute_outcomes(df["adj_close"]), split_labels(df.index, cutoff)], axis=1)
             o["up_hit"], o["down_hit"] = hit_flags(o[f"fwd_ret_{h0}"], f["atr_pct"], move)
-            o["tradable"], o["in_index"] = f["tradable"], f["in_index"]
+            o["tradable"] = f["tradable"]
             fc = [c for c in o.columns if c.startswith("fwd_ret_")]
             o[fc] = o[fc].astype("float32")
             o.to_parquet(out_dir / f"{t}.parquet")
+            # in_index is attached here only for THIS run's in-memory baseline
+            # report below -- never written to the shared outcomes file.
+            o["in_index"] = in_index_flag(o.index, added_by_ticker.get(t)).to_numpy()
             frames.append(o)
             coverage.update(set(o.index.year[o["tradable"].to_numpy()]))
         except Exception as e:
-            failed.append((t, repr(e)))
-            if len(failed) <= 3:
-                print(f"FAIL {t}: {e}")
-
-    if not frames:
-        print(f"\nAll {len(failed)} tickers failed. First few:")
-        for t, e in failed[:5]:
-            print(f"  {t}: {e}")
-        return
+            failed.append((t, str(e)))
 
     panel = pd.concat(frames)
     del frames
@@ -56,7 +53,7 @@ def main() -> None:
 
     market = panel[fwd_cols].where(panel["tradable"]).groupby(level=0).mean()
     market["n_stocks"] = panel["tradable"].groupby(level=0).sum()
-    market.to_parquet(out_dir / "_market_mean.parquet")
+    market.to_parquet(out_dir / f"_market_mean_{cfg['index']}.parquet")
 
     rows = []
     for view, vmask in (("all", panel["tradable"]), ("flagged", panel["tradable"] & panel["in_index"])):
@@ -73,9 +70,9 @@ def main() -> None:
                     row["down_hit"] = float(panel.loc[mh, "down_hit"].mean())
                 rows.append(row)
     base = pd.DataFrame(rows)
-    base.to_csv(Path(cfg["report_dir"]) / "baselines.csv", index=False)
+    base.to_csv(report_dir_for(cfg) / "baselines.csv", index=False)
 
-    (out_dir / "_meta.json").write_text(json.dumps(
+    (out_dir / f"_meta_{cfg['index']}.json").write_text(json.dumps(
         {"cutoff": str(cutoff.date()), "default_horizon": h0, "move_atr": move,
          "horizons": list(HORIZONS), "rows": int(len(panel))}, indent=2))
 

@@ -33,7 +33,9 @@ def best_single(conditions: list[dict], view: str, lookup: dict):
 
 def build_pattern_context(conn) -> pd.DataFrame:
     qualifying = pd.read_sql(
-        "SELECT DISTINCT pattern_id FROM pattern_results_pooled WHERE split='discovery' AND passed=1", conn)
+        "SELECT DISTINCT pattern_id FROM pattern_results_pooled WHERE split='discovery' AND passed=1 "
+        "AND run_id IN (SELECT MAX(run_id) FROM runs WHERE n_conditions=1 "
+        "UNION SELECT MAX(run_id) FROM runs WHERE n_conditions=2)", conn)
     ids = tuple(qualifying["pattern_id"].tolist())
     if not ids:
         return pd.DataFrame()
@@ -43,7 +45,9 @@ def build_pattern_context(conn) -> pd.DataFrame:
         f"r.n_occurrences, r.mean_fwd_return, r.baseline_mean, r.effect, r.q_value, "
         f"r.breadth_stocks, r.breadth_years, r.overlap_ratio, r.top3_year_share, r.mean_excl_top3 "
         f"FROM pattern_results_pooled r JOIN patterns p ON p.pattern_id = r.pattern_id "
-        f"WHERE r.pattern_id IN ({placeholders})", conn, params=ids)
+        f"WHERE r.pattern_id IN ({placeholders}) "
+        f"AND r.run_id IN (SELECT MAX(run_id) FROM runs WHERE n_conditions=1 "
+        f"UNION SELECT MAX(run_id) FROM runs WHERE n_conditions=2)", conn, params=ids)
 
     lookup = load_single_condition_lookup(conn)
     disc = df[df["split"] == "discovery"].copy()

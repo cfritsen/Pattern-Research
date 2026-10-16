@@ -14,68 +14,95 @@ REQUIRED_KEYS = [
 
 
 class ConfigError(ValueError):
-    """Raised for an invalid or missing config.yaml setting. The message
-    names the offending key and says what a valid value looks like, so a
-    hand-edit mistake fails loudly at startup instead of deep in a script."""
+    """Raised for invalid or missing config.yaml settings. Collects every
+    problem found, not just the first, so a form can show them all at once."""
 
 
 def load_config(path: str = "config.yaml") -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
+    cfg = read_raw_config(path)
     validate_config(cfg, path)
     return cfg
 
 
+def read_raw_config(path: str = "config.yaml") -> dict:
+    """Loads config.yaml without validating -- lets a Settings UI display
+    and fix an invalid file instead of crashing on load."""
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def save_config(cfg: dict, path: str = "config.yaml") -> None:
+    """Validates before writing -- never persists an invalid config.
+    NOTE: this rewrites the whole file via yaml.safe_dump, which does not
+    preserve comments -- any hand-written explanatory comments in the file
+    are lost once it's saved from here."""
+    validate_config(cfg, path)
+    ordered = {k: cfg[k] for k in REQUIRED_KEYS if k in cfg}
+    if "start_overrides" in cfg:
+        ordered["start_overrides"] = cfg["start_overrides"]
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(ordered, f, default_flow_style=False, sort_keys=False)
+
+
 def validate_config(cfg: dict, path: str = "config.yaml") -> None:
+    errors = []
+
     missing = [k for k in REQUIRED_KEYS if k not in cfg]
     if missing:
-        raise ConfigError(f"{path}: missing required setting(s): {', '.join(missing)}")
+        errors.append(f"missing required setting(s): {', '.join(missing)}")
 
-    if cfg["horizon"] not in VALID_HORIZONS:
-        raise ConfigError(
-            f"{path}: horizon={cfg['horizon']!r} is not one of the pre-computed horizons "
+    if "horizon" in cfg and cfg["horizon"] not in VALID_HORIZONS:
+        errors.append(
+            f"horizon={cfg['horizon']!r} is not one of the pre-computed horizons "
             f"{VALID_HORIZONS} (see outcomes.py). Pick one of these.")
 
     for key in ("discovery_frac", "corr_prune_threshold"):
-        v = cfg[key]
-        if not isinstance(v, (int, float)) or not (0 < v < 1):
-            raise ConfigError(f"{path}: {key}={v!r} must be a number between 0 and 1 (exclusive).")
+        if key in cfg:
+            v = cfg[key]
+            if not isinstance(v, (int, float)) or not (0 < v < 1):
+                errors.append(f"{key}={v!r} must be a number between 0 and 1 (exclusive).")
 
-    if not isinstance(cfg["move_atr"], (int, float)) or cfg["move_atr"] <= 0:
-        raise ConfigError(f"{path}: move_atr={cfg['move_atr']!r} must be a positive number.")
+    if "move_atr" in cfg and (not isinstance(cfg["move_atr"], (int, float)) or cfg["move_atr"] <= 0):
+        errors.append(f"move_atr={cfg['move_atr']!r} must be a positive number.")
 
-    if not isinstance(cfg["cost"], (int, float)) or cfg["cost"] < 0:
-        raise ConfigError(
-            f"{path}: cost={cfg['cost']!r} must be zero or a positive number "
+    if "cost" in cfg and (not isinstance(cfg["cost"], (int, float)) or cfg["cost"] < 0):
+        errors.append(
+            f"cost={cfg['cost']!r} must be zero or a positive number "
             f"(a fraction of price, e.g. 0.001 = 0.1% round-trip).")
 
-    if not isinstance(cfg["jump_threshold"], (int, float)) or cfg["jump_threshold"] <= 0:
-        raise ConfigError(f"{path}: jump_threshold={cfg['jump_threshold']!r} must be a positive number.")
+    if "jump_threshold" in cfg and (not isinstance(cfg["jump_threshold"], (int, float)) or cfg["jump_threshold"] <= 0):
+        errors.append(f"jump_threshold={cfg['jump_threshold']!r} must be a positive number.")
 
-    if not isinstance(cfg["pause_seconds"], (int, float)) or cfg["pause_seconds"] < 0:
-        raise ConfigError(f"{path}: pause_seconds={cfg['pause_seconds']!r} must be zero or positive.")
+    if "pause_seconds" in cfg and (not isinstance(cfg["pause_seconds"], (int, float)) or cfg["pause_seconds"] < 0):
+        errors.append(f"pause_seconds={cfg['pause_seconds']!r} must be zero or positive.")
 
     for key in ("test_all_buckets", "use_stooq_fallback"):
-        if not isinstance(cfg[key], bool):
-            raise ConfigError(f"{path}: {key}={cfg[key]!r} must be true or false.")
+        if key in cfg and not isinstance(cfg[key], bool):
+            errors.append(f"{key}={cfg[key]!r} must be true or false.")
 
-    from patternlab.universe_fetch import PROVIDERS, get_index_proxy
-    if cfg["index"] not in PROVIDERS:
-        raise ConfigError(
-            f"{path}: index={cfg['index']!r} has no registered loader. "
-            f"Available: {sorted(PROVIDERS)}.")
-    try:
-        get_index_proxy(cfg["index"])
-    except ValueError as e:
-        raise ConfigError(f"{path}: {e}") from e
+    if "index" in cfg:
+        from patternlab.universe_fetch import PROVIDERS, get_index_proxy
+        if cfg["index"] not in PROVIDERS:
+            errors.append(
+                f"index={cfg['index']!r} has no registered loader. "
+                f"Available: {sorted(PROVIDERS)}.")
+        else:
+            try:
+                get_index_proxy(cfg["index"])
+            except ValueError as e:
+                errors.append(str(e))
 
     overrides = cfg.get("start_overrides") or {}
     if not isinstance(overrides, dict):
-        raise ConfigError(f"{path}: start_overrides must be a mapping of TICKER: \"YYYY-MM-DD\".")
-    for ticker, date_str in overrides.items():
-        if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(date_str)):
-            raise ConfigError(
-                f"{path}: start_overrides[{ticker!r}]={date_str!r} must be a YYYY-MM-DD date string.")
+        errors.append("start_overrides must be a mapping of TICKER: \"YYYY-MM-DD\".")
+    else:
+        for ticker, date_str in overrides.items():
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(date_str)):
+                errors.append(
+                    f"start_overrides[{ticker!r}]={date_str!r} must be a YYYY-MM-DD date string.")
+
+    if errors:
+        raise ConfigError(f"{path}: " + "; ".join(errors))
 
 
 def ensure_dirs(cfg: dict) -> None:

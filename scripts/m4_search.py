@@ -23,6 +23,13 @@ def main() -> None:
     conn = connect(cfg)
     run_id = insert_run(conn, {"horizon": h0, "move_atr": cfg["move_atr"], "n_conditions": 1},
                         manifest["data_version"], manifest["universe_snapshot"])
+    # Clear prior single-condition results before inserting this run's --
+    # otherwise re-running Full Discovery accumulates duplicate rows per
+    # pattern across runs, which breaks every downstream query that assumes
+    # one row per (pattern_id, view, split).
+    conn.execute("DELETE FROM pattern_results_pooled WHERE pattern_id IN "
+                 "(SELECT pattern_id FROM patterns WHERE n_conditions = 1)")
+    conn.commit()
 
     bucket_frames, edge_log = {}, {}
     for col in feature_cols:

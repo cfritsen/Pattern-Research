@@ -1,20 +1,55 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
-from patternlab.config import load_config, ensure_dirs
+from patternlab.config import (
+    load_config, ensure_dirs, read_raw_config, save_config,
+    validate_config, ConfigError, VALID_HORIZONS,
+)
 from patternlab.db import connect
 from patternlab.reports import build_pattern_context, pattern_view, to_api_rows
 from patternlab.humanize import humanize_pattern_view
 from patternlab.universe_fetch import PROVIDERS
-
+from patternlab.jobs import start_job, get_status, discovery_status, STAGES
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "web" / "static"
 app = Flask(__name__, static_folder=None)
 app.json.sort_keys = False
 
+# "folder" fields get an Open Folder button instead of a text input (see
+# api_open_folder below). This is desktop-only functionality -- a hosted
+# web app has no way to open a folder on the SERVER's machine for a remote
+# user, so this route and these buttons are app-build-only and should be
+# dropped (or replaced with something else, e.g. a download link) when a
+# hosted version is built.
+FIELD_METADATA = [
+    {"key": "index", "label": "Index", "type": "select", "options": None,
+     "help": "Which index's current constituents to use. The benchmark/proxy ticker is derived automatically from this."},
+    {"key": "start_date", "label": "Start date", "type": "string",
+     "help": "Earliest date to fetch price history from (YYYY-MM-DD)."},
+    {"key": "use_stooq_fallback", "label": "Use Stooq fallback", "type": "boolean",
+     "help": "Fall back to Stooq if yfinance fails for a ticker."},
+    {"key": "jump_threshold", "label": "Jump threshold", "type": "number", "min": 0, "step": 0.01,
+     "help": "A day's price move larger than this (as a fraction, 0.25 = 25%) gets flagged in the data-quality report."},
+    {"key": "pause_seconds", "label": "Pause between fetches (seconds)", "type": "number", "min": 0, "step": 0.1,
+     "help": "Seconds to wait between price-fetch requests, to be kind to the data provider's servers."},
+    {"key": "horizon", "label": "Horizon (bars)", "type": "select", "options": list(VALID_HORIZONS),
+     "help": "Forward-return horizon the search is run against. Must be one of the pre-computed horizons."},
+    {"key": "move_atr", "label": "Move size (ATR multiple)", "type": "number", "min": 0.01, "step": 0.1,
+     "help": "Size of the \"move\" outcome, in units of that bar's own ATR%."},
+    {"key": "discovery_frac", "label": "Discovery fraction", "type": "number", "min": 0.01, "max": 0.99, "step": 0.01,
+     "help": "Fraction of the date range used for discovery (vs. confirmation)."},
+    {"key": "cost", "label": "Assumed trading cost", "type": "number", "min": 0, "step": 0.0001,
+     "help": "Assumed round-trip trading cost, as a fraction of price (0.001 = 0.1%)."},
+    {"key": "corr_prune_threshold", "label": "Correlation prune threshold", "type": "number", "min": 0.01, "max": 0.99, "step": 0.01,
+     "help": "Feature pairs with |Spearman correlation| above this are excluded from 2-condition testing."},
+    {"key": "test_all_buckets", "label": "Test all buckets (full grid)", "type": "boolean",
+     "help": "Off: 2-condition search only tests the extreme buckets of each continuous feature (faster). On: tests the full 5x5 grid (much slower)."},
+]
+
 
 def _cfg_for(index: str) -> dict:
-    # index is already checked against PROVIDERS by the caller below, so
-    # overriding it here without re-validating the whole config is safe.
     cfg = dict(load_config())
     cfg["index"] = index
     ensure_dirs(cfg)
@@ -53,5 +88,73 @@ def api_patterns():
     return jsonify(to_api_rows(context, edges_by_feature))
 
 
+@app.get("/api/config")
+def api_get_config():
+    cfg = read_raw_config()
+    errors = None
+    try:
+        validate_config(dict(cfg))
+    except ConfigError as e:
+        errors = str(e)
+    meta = [dict(f) for f in FIELD_METADATA]
+    for f in meta:
+        if f["key"] == "index":
+            f["options"] = sorted(PROVIDERS)
+    return jsonify({"config": cfg, "fields": meta, "errors": errors})
+
+
+@app.post("/api/config")
+def api_save_config():
+    cfg = request.get_json()
+    try:
+        save_config(cfg)
+    except ConfigError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"status": "ok"})
+
+
+# Desktop-app-only. See the FIELD_METADATA comment above -- a hosted web
+# version has no equivalent and should not expose this route.
+@app.get("/api/open-folder")
+def api_open_folder():
+    which = request.args.get("which")
+    if which not in ("data_dir", "report_dir"):
+        return jsonify({"error": f"Unknown folder {which!r}"}), 400
+
+    cfg = read_raw_config()
+    path = Path(cfg.get(which, which.replace("_dir", "")))
+    path.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=True)
+        else:
+            subprocess.run(["xdg-open", str(path)], check=True)
+    except Exception as e:
+        return jsonify({"error": f"Couldn't open {path}: {e}"}), 500
+    return jsonify({"status": "ok"})
+
+@app.post("/api/jobs/start")
+def api_jobs_start():
+    body = request.get_json() or {}
+    ok, msg = start_job(body.get("job"))
+    if not ok:
+        return jsonify({"error": msg}), 409
+    return jsonify({"status": "started"})
+
+
+@app.get("/api/jobs/status")
+def api_jobs_status():
+    status = get_status()
+    status["stages_meta"] = STAGES
+    status["discovery"] = discovery_status()
+    return jsonify(status)
+
 if __name__ == "__main__":
-    app.run(port=5151, debug=True)
+    # threaded=True so status polls are served while a job's background
+    # thread is running; use_reloader=False so an in-progress job isn't
+    # lost if the dev-reloader restarts the process (e.g. editing a .py
+    # file while a 20+ minute job is running).
+    app.run(port=5151, debug=True, threaded=True, use_reloader=False)

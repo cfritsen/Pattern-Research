@@ -47,6 +47,10 @@ def main() -> None:
     run_id = insert_run(conn, {"horizon": h0, "move_atr": cfg["move_atr"], "n_conditions": 2,
                                "corr_prune_threshold": corr_threshold, "extremes_only": extremes_only},
                         manifest["data_version"], manifest["universe_snapshot"])
+    # Same cleanup as m4_search.py, for 2-condition results.
+    conn.execute("DELETE FROM pattern_results_pooled WHERE pattern_id IN "
+                 "(SELECT pattern_id FROM patterns WHERE n_conditions = 2)")
+    conn.commit()
 
     for a, b, r in pruned:
         conn.execute("INSERT INTO feature_correlations (run_id, feature_a, feature_b, spearman_rho, pruned) "

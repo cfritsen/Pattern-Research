@@ -44,6 +44,25 @@
   .controls{display:flex;align-items:center;gap:0.5em;flex-wrap:wrap;margin:0.5em 0}
   .emptyMsg td{text-align:left;color:#777;padding:1em 8px}
   .placeholder{color:#888;font-style:italic;margin-top:1em}
+
+  .settingsForm{max-width:640px}
+  .field{margin-bottom:1em}
+  .field label.fieldLabel{display:block;font-weight:bold;margin-bottom:2px}
+  .field .help{color:#777;font-size:0.8em;margin-top:2px}
+  .field input[type=text], .field input[type=number], .field select{width:100%;max-width:300px}
+  .field input[type=checkbox]{width:auto;margin:0 0.5em 0 0}
+  .overrideRow{display:flex;gap:0.5em;margin-bottom:0.4em;align-items:center}
+  .overrideRow input{width:140px}
+  .configErrors{background:#fde2e2;border:1px solid #e88;padding:0.75em;border-radius:4px;margin-bottom:1em}
+  .configErrors ul{margin:0.3em 0 0;padding-left:1.2em}
+  .saveMsg{margin-left:0.5em;font-size:0.9em}
+  .saveMsg.ok{color:#1a7a1a}
+  .saveMsg.err{color:#a32}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ccc;
+    border-top-color:#4e8cff;border-radius:50%;animation:spin 0.8s linear infinite;
+    vertical-align:middle;margin-right:8px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .successMsg{color:#1a7a1a;font-weight:bold}  
 </style>
 </head>
 <body>
@@ -52,13 +71,21 @@
   <h1>Pattern Research</h1>
   <a class="navItem active" data-page="dashboard">Dashboard</a>
   <a class="navItem" data-page="market-research">Market Research</a>
+  <a class="navItem" data-page="settings">Settings</a>
 </nav>
 
 <div id="content">
 
   <div id="page-dashboard" class="page active">
     <h1>Dashboard</h1>
-    <p class="placeholder">Nothing here yet.</p>
+    <div id="discoveryBanner" class="note"></div>
+    <div class="controls">
+      <button id="refreshBtn" type="button">Refresh</button>
+      <button id="fullDiscoveryBtn" type="button">Full Discovery</button>
+    </div>
+    <div id="jobProgress"></div>
+    <h2>Watchlist</h2>
+    <p class="placeholder">Coming soon.</p>
   </div>
 
   <div id="page-market-research" class="page">
@@ -82,28 +109,40 @@
     <div id="table"></div>
   </div>
 
+  <div id="page-settings" class="page">
+    <h1>Settings</h1>
+    <div class="note">Changes here affect the <i>next</i> time the pipeline runs for the selected index -- they don't change data already shown on Market Research until you reprocess.</div>
+    <div id="configErrorsBox"></div>
+    <form id="settingsForm" class="settingsForm"></form>
+    <div id="startOverridesBox"></div>
+    <button id="saveSettingsBtn" type="button">Save Settings</button>
+    <button id="resetDefaultsBtn" type="button">Reset to Defaults</button>
+    <span id="saveMsg" class="saveMsg"></span>
+  </div>
+
 </div>
 
 <script>
+let lastRenderedMode = null;
+let previousJobStatus = null;
+let successVisible = false;
 // ---- Sidebar navigation ----
 function showPage(pageId) {
   document.querySelectorAll('.navItem').forEach(i => i.classList.toggle('active', i.dataset.page === pageId));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === `page-${pageId}`));
 }
-
 document.querySelectorAll('.navItem').forEach(item => {
   item.addEventListener('click', () => {
+    if (item.dataset.page !== 'dashboard') successVisible = false;
     window.location.hash = item.dataset.page;
   });
 });
-
-window.addEventListener('hashchange', () => {
-  showPage(window.location.hash.slice(1) || 'dashboard');
-});
-
+window.addEventListener('hashchange', () => { showPage(window.location.hash.slice(1) || 'dashboard'); });
 showPage(window.location.hash.slice(1) || 'dashboard');
 
-// ---- Market Research page (unchanged from before) ----
+// ========================================================================
+// Market Research page
+// ========================================================================
 let rawRows = [];
 let currentView = 'all';
 let sortState = { col: null, ascending: true };
@@ -366,6 +405,256 @@ document.getElementById('viewToggle').addEventListener('click', () => {
   render();
 });
 loadIndices().then(loadPatterns);
+
+// ========================================================================
+// Settings page
+// ========================================================================
+let settingsFields = [];
+let settingsValues = {};
+
+// Mirrors config.yaml's shipped defaults. "Reset to Defaults" only updates
+// the form -- nothing is saved until "Save Settings" is clicked.
+const DEFAULT_CONFIG = {
+  index: "sp500", data_dir: "data", report_dir: "reports",
+  start_date: "1996-01-01", use_stooq_fallback: true,
+  jump_threshold: 0.25, pause_seconds: 0.5,
+  start_overrides: { JCI: "2007-07-02" },
+  horizon: 5, move_atr: 1.0, discovery_frac: 0.70, cost: 0.001,
+  corr_prune_threshold: 0.7, test_all_buckets: false,
+};
+
+async function loadSettings() {
+  const res = await fetch('/api/config');
+  const data = await res.json();
+  settingsFields = data.fields;
+  settingsValues = data.config;
+  renderConfigErrors(data.errors);
+  renderSettingsForm();
+  renderStartOverrides();
+}
+
+function renderConfigErrors(errorText) {
+  const box = document.getElementById('configErrorsBox');
+  if (!errorText) { box.innerHTML = ''; return; }
+  const items = errorText.split(': ').slice(1).join(': ').split('; ');
+  box.innerHTML = `<div class="configErrors"><b>The current config.yaml has problems:</b><ul>${
+    items.map(i => `<li>${i}</li>`).join('')}</ul></div>`;
+}
+
+function renderSettingsForm() {
+  const form = document.getElementById('settingsForm');
+  form.innerHTML = settingsFields.map(f => {
+    const val = settingsValues[f.key];
+    let input;
+    if (f.type === 'folder') {
+      input = `<div>
+        <code>${val ?? ''}</code>
+        <button type="button" class="openFolderBtn" data-which="${f.key}">Open Folder</button>
+      </div>`;
+    } else if (f.type === 'boolean') {
+      input = `<input type="checkbox" data-key="${f.key}" ${val ? 'checked' : ''}>`;
+    } else if (f.type === 'select') {
+      input = `<select data-key="${f.key}">${f.options.map(o =>
+        `<option value="${o}" ${String(o) === String(val) ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+    } else if (f.type === 'number') {
+      const attrs = [f.min != null ? `min="${f.min}"` : '', f.max != null ? `max="${f.max}"` : '', f.step ? `step="${f.step}"` : ''].join(' ');
+      input = `<input type="number" ${attrs} data-key="${f.key}" value="${val ?? ''}">`;
+    } else {
+      input = `<input type="text" data-key="${f.key}" value="${val ?? ''}">`;
+    }
+    return `<div class="field">
+      <label class="fieldLabel">${f.label}</label>
+      ${input}
+      <div class="help">${f.help}</div>
+    </div>`;
+  }).join('');
+
+  form.querySelectorAll('.openFolderBtn').forEach(btn => {
+    btn.addEventListener('click', () => openFolder(btn.dataset.which));
+  });
+}
+
+async function openFolder(which) {
+  const msg = document.getElementById('saveMsg');
+  const res = await fetch(`/api/open-folder?which=${which}`);
+  const data = await res.json();
+  if (!res.ok) {
+    msg.textContent = data.error;
+    msg.className = 'saveMsg err';
+  }
+}
+
+function renderStartOverrides() {
+  const box = document.getElementById('startOverridesBox');
+  const overrides = settingsValues.start_overrides || {};
+  const rows = Object.entries(overrides);
+  box.innerHTML = `<div class="field"><label class="fieldLabel">Start-date overrides</label>
+    <div class="help">Manual per-ticker price-history start dates, for tickers whose early data is known-bad.</div>
+    <div id="overrideRows">${rows.map(([t, d]) => overrideRowHtml(t, d)).join('')}</div>
+    <button type="button" id="addOverrideBtn">+ Add override</button></div>`;
+
+  document.querySelectorAll('.overrideRemove').forEach(btn =>
+    btn.addEventListener('click', () => { btn.closest('.overrideRow').remove(); }));
+  document.getElementById('addOverrideBtn').addEventListener('click', () => {
+    document.getElementById('overrideRows').insertAdjacentHTML('beforeend', overrideRowHtml('', ''));
+    document.querySelectorAll('.overrideRemove').forEach(btn =>
+      btn.onclick = () => btn.closest('.overrideRow').remove());
+  });
+}
+
+function overrideRowHtml(ticker, date) {
+  return `<div class="overrideRow">
+    <input type="text" class="overrideTicker" placeholder="TICKER" value="${ticker}">
+    <input type="text" class="overrideDate" placeholder="YYYY-MM-DD" value="${date}">
+    <button type="button" class="overrideRemove">Remove</button>
+  </div>`;
+}
+
+function collectFormValues() {
+  const cfg = {};
+  // data_dir/report_dir have no form fields right now (hidden pending the
+  // future run/save/revisit/export reports feature) but are still required
+  // by validate_config, so carry their current values through unchanged.
+  cfg.data_dir = settingsValues.data_dir;
+  cfg.report_dir = settingsValues.report_dir;
+  settingsFields.forEach(f => {
+    const el = document.querySelector(`[data-key="${f.key}"]`);
+    if (f.type === 'boolean') cfg[f.key] = el.checked;
+    else if (f.type === 'select') cfg[f.key] = f.key === 'horizon' ? parseInt(el.value, 10) : el.value;
+    else if (f.type === 'number') cfg[f.key] = parseFloat(el.value);
+    else cfg[f.key] = el.value;
+  });
+  const overrides = {};
+  document.querySelectorAll('.overrideRow').forEach(row => {
+    const t = row.querySelector('.overrideTicker').value.trim().toUpperCase();
+    const d = row.querySelector('.overrideDate').value.trim();
+    if (t && d) overrides[t] = d;
+  });
+  cfg.start_overrides = overrides;
+  return cfg;
+}
+
+function resetDefaults() {
+  settingsValues = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  renderSettingsForm();
+  renderStartOverrides();
+  const msg = document.getElementById('saveMsg');
+  msg.textContent = 'Reset to defaults -- not yet saved.';
+  msg.className = 'saveMsg';
+}
+
+async function saveSettings() {
+  const msg = document.getElementById('saveMsg');
+  msg.textContent = 'Saving...';
+  msg.className = 'saveMsg';
+  const cfg = collectFormValues();
+  const res = await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  });
+  const data = await res.json();
+  if (res.ok) {
+    msg.textContent = 'Saved.';
+    msg.className = 'saveMsg ok';
+    settingsValues = cfg;
+    renderConfigErrors(null);
+  } else {
+    msg.textContent = data.error;
+    msg.className = 'saveMsg err';
+  }
+}
+
+// ========================================================================
+// Dashboard: pipeline jobs
+// ========================================================================
+function fmtElapsed(startIso) {
+  if (!startIso) return '';
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(startIso).getTime()) / 1000));
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
+function renderDiscoveryBanner(d) {
+  const box = document.getElementById('discoveryBanner');
+  if (d.never_run) {
+    box.innerHTML = '<b>Full Discovery has never been run for this index.</b> Run it to generate results.';
+    return;
+  }
+  let msg = `Last Full Discovery: ${new Date(d.completed_at).toLocaleString()} (${d.days_ago} day${d.days_ago === 1 ? '' : 's'} ago).`;
+  if (d.config_changed) msg += ' <b>Settings have changed since then</b> -- consider re-running Full Discovery.';
+  else if (d.days_ago >= 30) msg += ' <b>It has been over a month</b> -- consider re-running Full Discovery.';
+  box.innerHTML = msg;
+}
+
+const JOB_LABELS = { refresh: 'Refresh', full_discovery: 'Full Discovery' };
+
+function renderJobProgress(status) {
+  const box = document.getElementById('jobProgress');
+  const btns = [document.getElementById('refreshBtn'), document.getElementById('fullDiscoveryBtn')];
+
+  // Only count it as "just succeeded" if THIS client watched it go from
+  // running to done -- a stale "done" from a previous session (first poll
+  // after a page load/refresh) never sets this.
+  if (previousJobStatus === 'running' && status.status === 'done') {
+    successVisible = true;
+  }
+  previousJobStatus = status.status;
+
+  if (status.status === 'running') {
+    btns.forEach(b => b.disabled = true);
+    const stages = status.stages_meta.filter(s => status.stage_ids.includes(s.id));
+    const idx = status.current_index;
+    if (lastRenderedMode !== 'running') {
+      box.innerHTML = `
+        <div><span class="spinner"></span><b id="stageLabel"></b> (<span id="stageCount"></span>)</div>
+        <div style="color:#666;font-size:0.85em">Stage elapsed: <span id="stageElapsed"></span>
+          &nbsp;|&nbsp; Total elapsed: <span id="totalElapsed"></span></div>`;
+      lastRenderedMode = 'running';
+    }
+    document.getElementById('stageLabel').textContent = stages[idx].label;
+    document.getElementById('stageCount').textContent = `stage ${idx + 1} of ${stages.length}`;
+    document.getElementById('stageElapsed').textContent = fmtElapsed(status.stage_started_at);
+    document.getElementById('totalElapsed').textContent = fmtElapsed(status.started_at);
+  } else if (status.status === 'error') {
+    btns.forEach(b => b.disabled = false);
+    box.innerHTML = `<div class="configErrors"><b>Job failed:</b><pre style="white-space:pre-wrap">${status.error}</pre></div>`;
+    lastRenderedMode = 'error';
+  } else if (status.status === 'done' && successVisible) {
+    btns.forEach(b => b.disabled = false);
+    const label = JOB_LABELS[status.job_name] || status.job_name;
+    box.innerHTML = `<div class="successMsg">${label} completed successfully.</div>`;
+    lastRenderedMode = 'done';
+  } else {
+    btns.forEach(b => b.disabled = false);
+    box.innerHTML = '';
+    lastRenderedMode = 'idle';
+  }
+}
+
+async function pollJobStatus() {
+  const res = await fetch('/api/jobs/status');
+  const status = await res.json();
+  renderDiscoveryBanner(status.discovery);
+  renderJobProgress(status);
+}
+
+async function startJob(jobName) {
+  const res = await fetch('/api/jobs/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job: jobName }),
+  });
+  if (!res.ok) alert((await res.json()).error);
+  pollJobStatus();
+}
+
+document.getElementById('refreshBtn').addEventListener('click', () => startJob('refresh'));
+document.getElementById('fullDiscoveryBtn').addEventListener('click', () => startJob('full_discovery'));
+setInterval(pollJobStatus, 1000);
+pollJobStatus();
+
+document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+document.getElementById('resetDefaultsBtn').addEventListener('click', resetDefaults);
+loadSettings();
 </script>
 </body>
 </html>

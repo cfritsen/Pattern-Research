@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pattern Research</title>
+<style>
+  * { box-sizing: border-box; }
+  body{font-family:sans-serif;margin:0;background:#fafafa;display:flex;height:100vh;overflow:hidden}
+
+  #sidebar{width:200px;flex-shrink:0;background:#1e2430;color:#cfd6e2;height:100vh;
+    overflow-y:auto;padding:1em 0}
+  #sidebar h1{font-size:1.05em;color:#fff;padding:0 1em;margin:0 0 1em}
+  .navItem{display:block;padding:0.6em 1em;cursor:pointer;color:#cfd6e2;text-decoration:none;
+    border-left:3px solid transparent}
+  .navItem:hover{background:#2a3242}
+  .navItem.active{background:#2a3242;border-left-color:#4e8cff;color:#fff}
+
+  #content{flex:1;overflow-y:auto;padding:1.5em 2em}
+  .page{display:none}
+  .page.active{display:block}
+
+  table{border-collapse:collapse;width:100%;font-size:0.8em}
+  td,th{border:1px solid #ccc;padding:5px 8px;text-align:right;vertical-align:top;position:relative}
+  th{background:#eee;white-space:nowrap}
+  td:first-child,th:first-child{text-align:left;min-width:150px}
+  td:nth-child(2),th:nth-child(2){text-align:left}
+  .sortLabel{cursor:pointer;user-select:none}
+  .sortLabel:hover{text-decoration:underline}
+  th.sorted{background:#dce8f5}
+  .funnel{cursor:pointer;margin-left:6px;opacity:0.45;display:inline-block;vertical-align:middle}
+  .funnel.active{opacity:1}
+  .funnel svg{width:11px;height:11px;display:block}
+  .popover{position:absolute;top:100%;left:0;background:#fff;border:1px solid #999;
+    border-radius:4px;padding:0.6em;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:10;
+    font-weight:normal;text-align:left;white-space:nowrap}
+  .popover input[type=number]{width:80px;font-size:0.85em}
+  .popover label{display:block;font-weight:normal;margin:2px 0}
+  .note{background:#fff3cd;padding:0.75em;margin:1em 0;border-radius:4px}
+  .cond{padding:2px 0;border-left:3px solid #ccc;padding-left:6px;margin-bottom:3px}
+  select,button,input{font-size:1em;padding:4px 8px;margin-right:0.5em}
+  #filterInput{width:240px}
+  #rowCount{color:#666;font-size:0.85em}
+  #topN{width:70px}
+  .controls{display:flex;align-items:center;gap:0.5em;flex-wrap:wrap;margin:0.5em 0}
+  .emptyMsg td{text-align:left;color:#777;padding:1em 8px}
+  .placeholder{color:#888;font-style:italic;margin-top:1em}
+</style>
+</head>
+<body>
+
+<nav id="sidebar">
+  <h1>Pattern Research</h1>
+  <a class="navItem active" data-page="dashboard">Dashboard</a>
+  <a class="navItem" data-page="market-research">Market Research</a>
+</nav>
+
+<div id="content">
+
+  <div id="page-dashboard" class="page active">
+    <h1>Dashboard</h1>
+    <p class="placeholder">Nothing here yet.</p>
+  </div>
+
+  <div id="page-market-research" class="page">
+    <h1>Market Research</h1>
+    <div class="note"><b>This report shows historical statistical patterns in price data. It is descriptive research, not investment advice, and not a recommendation to buy or sell any security.</b></div>
+
+    <div class="controls">
+      <label>Index: <select id="indexSelect"></select></label>
+      <button id="loadBtn">Load</button>
+      <button id="viewToggle" type="button">View: All Data</button>
+      <label>Show top <input id="topN" type="number" value="25" min="1"></label>
+      <span id="status"></span>
+    </div>
+
+    <h2>Strongest historical results</h2>
+    <p>
+      <input id="filterInput" type="text" placeholder="Filter (Conditions, Best Single Condition, Year Concentration)...">
+      <span id="rowCount"></span>
+    </p>
+
+    <div id="table"></div>
+  </div>
+
+</div>
+
+<script>
+// ---- Sidebar navigation ----
+function showPage(pageId) {
+  document.querySelectorAll('.navItem').forEach(i => i.classList.toggle('active', i.dataset.page === pageId));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === `page-${pageId}`));
+}
+
+document.querySelectorAll('.navItem').forEach(item => {
+  item.addEventListener('click', () => {
+    window.location.hash = item.dataset.page;
+  });
+});
+
+window.addEventListener('hashchange', () => {
+  showPage(window.location.hash.slice(1) || 'dashboard');
+});
+
+showPage(window.location.hash.slice(1) || 'dashboard');
+
+// ---- Market Research page (unchanged from before) ----
+let rawRows = [];
+let currentView = 'all';
+let sortState = { col: null, ascending: true };
+let rangeFilters = {};
+let categoryFilters = {};
+let openPopover = null;
+
+const FUNNEL_SVG = '<svg viewBox="0 0 16 16"><path d="M1 2h14l-5 6v5l-4 2V8z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+
+function getViewField(row, field) { return row[`${field}_${currentView}`]; }
+
+function fmtPct(v) { return (v === null || v === undefined) ? '--' : (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%'; }
+function fmtPct0(v) { return (v === null || v === undefined) ? '--' : (v * 100).toFixed(0) + '%'; }
+function fmtInt(v) { return (v === null || v === undefined) ? '--' : v.toLocaleString(); }
+function fmtBestSingle(o) { return o ? `${fmtPct(o.effect)} (${o.feature} bucket ${o.bucket})` : 'N/A'; }
+function fmtConcentration(top3, exclMean, refMean) {
+  if (top3 === null || top3 === undefined) return '--';
+  if (top3 > 0.35) {
+    const verb = (exclMean != null && refMean != null && exclMean < refMean) ? 'drops to' : 'changes to';
+    return `Caution: ${(top3 * 100).toFixed(0)}% from top 3 years (excl., ${verb} ${fmtPct(exclMean)})`;
+  }
+  return `Consistent: ${(top3 * 100).toFixed(0)}% from top 3 years`;
+}
+function stripHtmlForSearch(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || '';
+}
+
+function overlapCategory(r) {
+  if (r === null || r === undefined) return 'na';
+  if (r > 1.5) return 'cooccur';
+  if (r < 1 / 1.5) return 'avoided';
+  return 'no';
+}
+const OVERLAP_OPTS = [['no', 'No overlap'], ['cooccur', 'Co-occurs more than chance'], ['avoided', 'Avoided (less than chance)'], ['na', 'N/A']];
+
+function directionCategory(effect) {
+  if (effect === null || effect === undefined) return 'na';
+  return effect > 0 ? 'bullish' : 'bearish';
+}
+const DIRECTION_OPTS = [['bullish', 'Bullish'], ['bearish', 'Bearish'], ['na', 'N/A']];
+
+function confirmCategory(ok) {
+  if (ok === null || ok === undefined) return 'na';
+  return ok ? 'yes' : 'no';
+}
+
+const COLUMNS = [
+  { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
+  { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0, filter: 'range' },
+  { id: 'cases', label: 'Cases Found', numeric: true, get: r => currentView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt, filter: 'range' },
+  { id: 'ret5', label: '5-day Return', numeric: true, get: r => getViewField(r, 'mean_fwd_return'), fmt: fmtPct, filter: 'range' },
+  { id: 'base5', label: '5-day Baseline', numeric: true, get: r => getViewField(r, 'baseline_mean'), fmt: fmtPct, filter: 'range' },
+  { id: 'edge', label: 'Edge', numeric: true, get: r => getViewField(r, 'effect'), fmt: fmtPct, filter: 'range' },
+  { id: 'dir', label: 'Direction', category: true, get: r => directionCategory(getViewField(r, 'effect')),
+    fmt: v => ({ bullish: 'Bullish', bearish: 'Bearish', na: 'N/A' }[v]), filter: 'category', opts: DIRECTION_OPTS },
+  { id: 'best', label: 'vs. Best Single Condition', html: true, get: r => getViewField(r, 'best_single_html') },
+  { id: 'fwd', label: 'Forward Test Return', numeric: true, get: r => getViewField(r, 'confirm_mean_fwd_return'), fmt: fmtPct, filter: 'range' },
+  { id: 'fdr', label: 'False Discovery Rate', numeric: true, get: r => getViewField(r, 'q_value'), fmt: fmtPct0, filter: 'range' },
+  { id: 'stocks', label: 'Stocks Agreed', numeric: true, get: r => getViewField(r, 'breadth_stocks'), fmt: fmtPct0, filter: 'range' },
+  { id: 'years', label: 'Years Agreed', numeric: true, get: r => getViewField(r, 'breadth_years'), fmt: fmtPct0, filter: 'range' },
+  { id: 'overlap', label: 'Conditions Overlap?', category: true, get: r => overlapCategory(r.overlap_ratio),
+    fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1], filter: 'category', opts: OVERLAP_OPTS },
+  { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
+];
+
+function initFilters() {
+  rangeFilters = {};
+  categoryFilters = {};
+  for (const col of COLUMNS) {
+    if (col.filter === 'category') categoryFilters[col.id] = new Set(col.opts.map(([k]) => k));
+  }
+}
+
+async function loadIndices() {
+  const res = await fetch('/api/indices');
+  const indices = await res.json();
+  document.getElementById('indexSelect').innerHTML = indices.map(i => `<option value="${i}">${i}</option>`).join('');
+}
+
+async function loadPatterns() {
+  const status = document.getElementById('status');
+  const index = document.getElementById('indexSelect').value;
+  status.textContent = ' Loading...';
+  const res = await fetch(`/api/patterns?index=${encodeURIComponent(index)}`);
+  rawRows = await res.json();
+  sortState = { col: 'edge', ascending: false };
+  initFilters();
+  document.getElementById('filterInput').value = '';
+  status.textContent = '';
+  render();
+}
+
+function rowVisibleInView(row) {
+  const effect = getViewField(row, 'effect');
+  if (effect === null || effect === undefined) return false;
+  return confirmCategory(getViewField(row, 'direction_ok')) !== 'no';
+}
+
+function applyTextFilter(rows) {
+  const term = document.getElementById('filterInput').value.trim().toLowerCase();
+  if (!term) return rows;
+  const tmp = document.createElement('div');
+  return rows.filter(r => {
+    tmp.innerHTML = r.conditions_html;
+    const condText = (tmp.textContent || '').toLowerCase();
+    const bestText = stripHtmlForSearch(getViewField(r, 'best_single_html')).toLowerCase();
+    const yearText = fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean).toLowerCase();
+    return condText.includes(term) || bestText.includes(term) || yearText.includes(term);
+  });
+}
+
+function applyColumnFilters(rows) {
+  return rows.filter(row => COLUMNS.every(col => {
+    if (col.filter === 'range') {
+      const bound = rangeFilters[col.id];
+      if (!bound || (bound.min == null && bound.max == null)) return true;
+      const v = col.get(row);
+      if (v === null || v === undefined) return false;
+      if (bound.min != null && v < bound.min) return false;
+      if (bound.max != null && v > bound.max) return false;
+      return true;
+    }
+    if (col.filter === 'category') return categoryFilters[col.id].has(col.get(row));
+    return true;
+  }));
+}
+
+function applySort(rows) {
+  if (!sortState.col) return rows;
+  const col = COLUMNS.find(c => c.id === sortState.col);
+  const dir = sortState.ascending ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const av = col.get(a), bv = col.get(b);
+    if (col.category) return String(av).localeCompare(String(bv)) * dir;
+    if (col.numeric) {
+      if (av === null && bv === null) return 0;
+      if (av === null || av === undefined) return 1;
+      if (bv === null || bv === undefined) return -1;
+      return (av - bv) * dir;
+    }
+    return String(av).localeCompare(String(bv)) * dir;
+  });
+}
+
+function render() {
+  let rows = rawRows.filter(rowVisibleInView);
+  rows = applyTextFilter(rows);
+  rows = applyColumnFilters(rows);
+  rows = applySort(rows);
+  const topN = parseInt(document.getElementById('topN').value, 10) || 25;
+  const shown = rows.slice(0, topN);
+  document.getElementById('rowCount').textContent = `${shown.length} shown of ${rows.length} matching (of ${rawRows.length} total)`;
+  renderTable(shown);
+}
+
+function closePopovers() {
+  document.querySelectorAll('.popover').forEach(p => p.remove());
+  openPopover = null;
+}
+
+function togglePopover(col, anchorTh) {
+  if (openPopover === col.id) { closePopovers(); return; }
+  closePopovers();
+  openPopover = col.id;
+  const pop = document.createElement('div');
+  pop.className = 'popover';
+  if (col.filter === 'range') {
+    const bound = rangeFilters[col.id] || {};
+    pop.innerHTML = `
+      <div>min <input type="number" step="any" class="rmin" value="${bound.min ?? ''}"></div>
+      <div>max <input type="number" step="any" class="rmax" value="${bound.max ?? ''}"></div>
+      <button class="clearBtn">Clear</button>`;
+    pop.querySelector('.rmin').addEventListener('input', e => {
+      rangeFilters[col.id] = rangeFilters[col.id] || {};
+      rangeFilters[col.id].min = e.target.value === '' ? null : parseFloat(e.target.value);
+      render();
+    });
+    pop.querySelector('.rmax').addEventListener('input', e => {
+      rangeFilters[col.id] = rangeFilters[col.id] || {};
+      rangeFilters[col.id].max = e.target.value === '' ? null : parseFloat(e.target.value);
+      render();
+    });
+    pop.querySelector('.clearBtn').addEventListener('click', () => {
+      delete rangeFilters[col.id];
+      closePopovers();
+      render();
+    });
+  } else if (col.filter === 'category') {
+    const allowed = categoryFilters[col.id];
+    pop.innerHTML = col.opts.map(([k, label]) =>
+      `<label><input type="checkbox" data-k="${k}" ${allowed.has(k) ? 'checked' : ''}> ${label}</label>`
+    ).join('') + '<button class="clearBtn">Select all</button>';
+    pop.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) allowed.add(cb.dataset.k); else allowed.delete(cb.dataset.k);
+        render();
+      });
+    });
+    pop.querySelector('.clearBtn').addEventListener('click', () => {
+      categoryFilters[col.id] = new Set(col.opts.map(([k]) => k));
+      closePopovers();
+      render();
+    });
+  }
+  anchorTh.appendChild(pop);
+}
+
+function renderTable(rows) {
+  const container = document.getElementById('table');
+  let html = '<table><thead><tr>';
+  for (const col of COLUMNS) {
+    const isSorted = sortState.col === col.id;
+    const arrow = isSorted ? (sortState.ascending ? ' \u25B2' : ' \u25BC') : '';
+    const hasFilter = col.filter && ((col.filter === 'range' && rangeFilters[col.id] && (rangeFilters[col.id].min != null || rangeFilters[col.id].max != null))
+      || (col.filter === 'category' && categoryFilters[col.id].size < col.opts.length));
+    const funnel = col.filter ? `<span class="funnel ${hasFilter ? 'active' : ''}" data-col="${col.id}">${FUNNEL_SVG}</span>` : '';
+    html += `<th class="${isSorted ? 'sorted' : ''}"><span class="sortLabel" data-col="${col.id}">${col.label}${arrow}</span>${funnel}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+  if (!rows.length) {
+    html += `<tr class="emptyMsg"><td colspan="${COLUMNS.length}">No patterns match the current filters.</td></tr>`;
+  } else {
+    for (const row of rows) {
+      html += '<tr>' + COLUMNS.map(c => `<td>${c.fmt ? c.fmt(c.get(row)) : c.get(row)}</td>`).join('') + '</tr>';
+    }
+  }
+  html += '</tbody></table>';
+  container.innerHTML = html;
+
+  container.querySelectorAll('.sortLabel').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.col;
+      sortState = sortState.col === id ? { col: id, ascending: !sortState.ascending } : { col: id, ascending: true };
+      closePopovers();
+      render();
+    });
+  });
+  container.querySelectorAll('.funnel').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const col = COLUMNS.find(c => c.id === el.dataset.col);
+      togglePopover(col, el.parentElement);
+    });
+  });
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.popover') && !e.target.closest('.funnel')) closePopovers();
+});
+
+document.getElementById('loadBtn').addEventListener('click', loadPatterns);
+document.getElementById('filterInput').addEventListener('input', render);
+document.getElementById('topN').addEventListener('input', render);
+document.getElementById('viewToggle').addEventListener('click', () => {
+  currentView = currentView === 'all' ? 'flagged' : 'all';
+  document.getElementById('viewToggle').textContent = `View: ${currentView === 'all' ? 'All Data' : 'Index-Only Data'}`;
+  render();
+});
+loadIndices().then(loadPatterns);
+</script>
+</body>
+</html>

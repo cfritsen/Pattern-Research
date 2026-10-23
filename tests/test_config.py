@@ -8,6 +8,7 @@ GOOD = {
     "start_overrides": {"JCI": "2007-07-02"},
     "horizon": 5, "move_atr": 1.0, "discovery_frac": 0.7, "cost": 0.001,
     "corr_prune_threshold": 0.7, "test_all_buckets": False,
+    "multithreading": False, "disabled_features": [],
 }
 
 

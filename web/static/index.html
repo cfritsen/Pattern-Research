@@ -62,7 +62,27 @@
     border-top-color:#4e8cff;border-radius:50%;animation:spin 0.8s linear infinite;
     vertical-align:middle;margin-right:8px}
   @keyframes spin{to{transform:rotate(360deg)}}
-  .successMsg{color:#1a7a1a;font-weight:bold}  
+  .successMsg{color:#1a7a1a;font-weight:bold} 
+  .watchlistGrid{display:flex;flex-wrap:wrap;gap:0.75em;margin-top:0.5em}
+  .watchlistCard{background:#fff;border:1px solid #ddd;border-radius:10px;
+    padding:0.75em 1em;min-width:160px;box-shadow:0 1px 3px rgba(0,0,0,0.08)}
+  .watchlistCard .ticker{font-weight:bold;font-size:1.05em}
+  .watchlistCard .badge{display:inline-block;background:#eef3fb;color:#2a5a9c;
+    border-radius:12px;padding:1px 8px;font-size:0.75em;margin:4px 0}
+  .watchlistCard .return{font-size:0.95em;margin-top:2px}
+  .watchlistCard .extra{color:#888;font-size:0.75em;margin-top:2px} 
+  .infoTip{position:relative;display:inline-block;margin-left:4px;cursor:help;color:#888;
+    font-size:0.75em;border:1px solid #999;border-radius:50%;width:13px;height:13px;
+    text-align:center;line-height:12px;font-weight:normal}
+  .infoTip .tipBox{display:none;position:absolute;top:140%;left:50%;transform:translateX(-50%);
+    background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:1em;
+    white-space:normal;width:200px;z-index:20;font-weight:normal;text-align:left}
+  .infoTip:hover .tipBox{display:block}
+  #baselineDisplay{font-size:0.85em;color:#555;margin:0.3em 0 0.6em}
+  .tabBtn{padding:6px 14px;border:1px solid #ccc;background:#eee;cursor:pointer;border-radius:4px 4px 0 0;margin-right:2px}
+  .tabBtn.active{background:#fff;border-bottom:1px solid #fff;font-weight:bold}
+  .tabPanel{display:none;border:1px solid #ccc;border-top:none;padding:1em}
+  .tabPanel.active{display:block}
 </style>
 </head>
 <body>
@@ -71,21 +91,23 @@
   <h1>Pattern Research</h1>
   <a class="navItem active" data-page="dashboard">Dashboard</a>
   <a class="navItem" data-page="market-research">Market Research</a>
+  <a class="navItem" data-page="stock-research">Stock Research</a>
   <a class="navItem" data-page="settings">Settings</a>
 </nav>
 
 <div id="content">
 
-  <div id="page-dashboard" class="page active">
+    <div id="page-dashboard" class="page active">
     <h1>Dashboard</h1>
     <div id="discoveryBanner" class="note"></div>
     <div class="controls">
-      <button id="refreshBtn" type="button">Refresh</button>
-      <button id="fullDiscoveryBtn" type="button">Full Discovery</button>
+      <button id="updateDataBtn" type="button">Update Price Data</button>
+      <button id="fullRediscoveryBtn" type="button">Full Rediscovery</button>
     </div>
     <div id="jobProgress"></div>
     <h2>Watchlist</h2>
-    <p class="placeholder">Coming soon.</p>
+    <div id="watchlistStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
+    <div id="watchlistCards" class="watchlistGrid"></div>
   </div>
 
   <div id="page-market-research" class="page">
@@ -103,10 +125,35 @@
     <h2>Strongest historical results</h2>
     <p>
       <input id="filterInput" type="text" placeholder="Filter (Conditions, Best Single Condition, Year Concentration)...">
+      <div id="baselineDisplay"></div>
       <span id="rowCount"></span>
     </p>
 
     <div id="table"></div>
+  </div>
+
+  <div id="page-stock-research" class="page">
+    <h1>Stock Research</h1>
+    <div class="controls">
+      <input id="srTickerInput" type="text" placeholder="Ticker (e.g. AAPL)" style="text-transform:uppercase">
+      <button id="srSearchBtn" type="button">Search</button>
+      <button id="srViewToggle" type="button">View: All Data</button>
+      <span id="srStatus"></span>
+    </div>
+    <div id="srBaselineDisplay" style="font-size:0.85em;color:#555;margin:0.3em 0"></div>
+
+    <div>
+      <button class="tabBtn active" data-tab="matching">Matching Market Pattern</button>
+      <button class="tabBtn" data-tab="perstock">Per Stock</button>
+    </div>
+    <div id="tab-matching" class="tabPanel active">
+      <input id="srMatchFilter" type="text" placeholder="Filter...">
+      <div id="srMatchTable"></div>
+    </div>
+    <div id="tab-perstock" class="tabPanel">
+      <input id="srStockFilter" type="text" placeholder="Filter...">
+      <div id="srStockTable"></div>
+    </div>
   </div>
 
   <div id="page-settings" class="page">
@@ -115,6 +162,7 @@
     <div id="configErrorsBox"></div>
     <form id="settingsForm" class="settingsForm"></form>
     <div id="startOverridesBox"></div>
+    <div id="featureTogglesBox"></div>
     <button id="saveSettingsBtn" type="button">Save Settings</button>
     <button id="resetDefaultsBtn" type="button">Reset to Defaults</button>
     <span id="saveMsg" class="saveMsg"></span>
@@ -137,8 +185,16 @@ document.querySelectorAll('.navItem').forEach(item => {
     window.location.hash = item.dataset.page;
   });
 });
-window.addEventListener('hashchange', () => { showPage(window.location.hash.slice(1) || 'dashboard'); });
-showPage(window.location.hash.slice(1) || 'dashboard');
+function handleHashChange() {
+  const page = (window.location.hash.slice(1) || 'dashboard').split('?')[0];
+  showPage(page);
+  if (page === 'stock-research') {
+    const t = parseTickerFromHash();
+    if (t && t !== srTicker) srSearch(t);
+  }
+}
+window.addEventListener('hashchange', handleHashChange);
+handleHashChange();
 
 // ========================================================================
 // Market Research page
@@ -175,11 +231,11 @@ function stripHtmlForSearch(html) {
 
 function overlapCategory(r) {
   if (r === null || r === undefined) return 'na';
-  if (r > 1.5) return 'cooccur';
-  if (r < 1 / 1.5) return 'avoided';
-  return 'no';
+  if (r > 1.5) return 'above';
+  if (r < 1 / 1.5) return 'below';
+  return 'na';
 }
-const OVERLAP_OPTS = [['no', 'No overlap'], ['cooccur', 'Co-occurs more than chance'], ['avoided', 'Avoided (less than chance)'], ['na', 'N/A']];
+const OVERLAP_OPTS = [['above', 'Correlated'], ['below', 'Anti-correlated'], ['na', 'N/A']];
 
 function directionCategory(effect) {
   if (effect === null || effect === undefined) return 'na';
@@ -197,16 +253,14 @@ const COLUMNS = [
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0, filter: 'range' },
   { id: 'cases', label: 'Cases Found', numeric: true, get: r => currentView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt, filter: 'range' },
   { id: 'ret5', label: '5-day Return', numeric: true, get: r => getViewField(r, 'mean_fwd_return'), fmt: fmtPct, filter: 'range' },
-  { id: 'base5', label: '5-day Baseline', numeric: true, get: r => getViewField(r, 'baseline_mean'), fmt: fmtPct, filter: 'range' },
   { id: 'edge', label: 'Edge', numeric: true, get: r => getViewField(r, 'effect'), fmt: fmtPct, filter: 'range' },
-  { id: 'dir', label: 'Direction', category: true, get: r => directionCategory(getViewField(r, 'effect')),
-    fmt: v => ({ bullish: 'Bullish', bearish: 'Bearish', na: 'N/A' }[v]), filter: 'category', opts: DIRECTION_OPTS },
   { id: 'best', label: 'vs. Best Single Condition', html: true, get: r => getViewField(r, 'best_single_html') },
-  { id: 'fwd', label: 'Forward Test Return', numeric: true, get: r => getViewField(r, 'confirm_mean_fwd_return'), fmt: fmtPct, filter: 'range' },
-  { id: 'fdr', label: 'False Discovery Rate', numeric: true, get: r => getViewField(r, 'q_value'), fmt: fmtPct0, filter: 'range' },
+  { id: 'fwd', label: 'Forward Test', numeric: true, get: r => getViewField(r, 'confirm_mean_fwd_return'), fmt: fmtPct, filter: 'range' },
+  { id: 'fdr', label: 'FDR', tip: 'False Discovery Rate', numeric: true, get: r => getViewField(r, 'q_value'), fmt: fmtPct0, filter: 'range' },
   { id: 'stocks', label: 'Stocks Agreed', numeric: true, get: r => getViewField(r, 'breadth_stocks'), fmt: fmtPct0, filter: 'range' },
   { id: 'years', label: 'Years Agreed', numeric: true, get: r => getViewField(r, 'breadth_years'), fmt: fmtPct0, filter: 'range' },
-  { id: 'overlap', label: 'Conditions Overlap?', category: true, get: r => overlapCategory(r.overlap_ratio),
+  { id: 'overlap', label: 'Correlation', tip: "Measures how often this pattern's conditions occur together. Correlated: they tend to occur together. Anti-correlated: they tend to occur apart. N/A: no meaningful correlation.",
+    category: true, get: r => overlapCategory(r.overlap_ratio),
     fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1], filter: 'category', opts: OVERLAP_OPTS },
   { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
 ];
@@ -298,7 +352,16 @@ function render() {
   const topN = parseInt(document.getElementById('topN').value, 10) || 25;
   const shown = rows.slice(0, topN);
   document.getElementById('rowCount').textContent = `${shown.length} shown of ${rows.length} matching (of ${rawRows.length} total)`;
+  renderBaseline();
   renderTable(shown);
+}
+
+function renderBaseline() {
+  const box = document.getElementById('baselineDisplay');
+  const row = rawRows.find(r => r[`baseline_mean_${currentView}`] != null);
+  if (!row) { box.textContent = ''; return; }
+  const label = currentView === 'all' ? 'All Data' : 'Index-Only Data';
+  box.textContent = `Baseline (${label}): ${fmtPct(row[`baseline_mean_${currentView}`])}`;
 }
 
 function closePopovers() {
@@ -362,7 +425,8 @@ function renderTable(rows) {
     const hasFilter = col.filter && ((col.filter === 'range' && rangeFilters[col.id] && (rangeFilters[col.id].min != null || rangeFilters[col.id].max != null))
       || (col.filter === 'category' && categoryFilters[col.id].size < col.opts.length));
     const funnel = col.filter ? `<span class="funnel ${hasFilter ? 'active' : ''}" data-col="${col.id}">${FUNNEL_SVG}</span>` : '';
-    html += `<th class="${isSorted ? 'sorted' : ''}"><span class="sortLabel" data-col="${col.id}">${col.label}${arrow}</span>${funnel}</th>`;
+    const tip = col.tip ? `<span class="infoTip">?<span class="tipBox">${col.tip}</span></span>` : '';
+    html += `<th class="${isSorted ? 'sorted' : ''}"><span class="sortLabel" data-col="${col.id}">${col.label}${arrow}</span>${tip}${funnel}</th>`;
   }
   html += '</tr></thead><tbody>';
   if (!rows.length) {
@@ -428,9 +492,11 @@ async function loadSettings() {
   const data = await res.json();
   settingsFields = data.fields;
   settingsValues = data.config;
+  allFeatures = data.all_features;
   renderConfigErrors(data.errors);
   renderSettingsForm();
   renderStartOverrides();
+  renderFeatureToggles();
 }
 
 function renderConfigErrors(errorText) {
@@ -502,6 +568,19 @@ function renderStartOverrides() {
   });
 }
 
+let allFeatures = [];
+
+function renderFeatureToggles() {
+  const box = document.getElementById('featureTogglesBox');
+  const disabled = new Set(settingsValues.disabled_features || []);
+  box.innerHTML = `<div class="field"><label class="fieldLabel">Features used in search</label>
+    <div class="help">Uncheck a feature to exclude it from the next M4/M5 run entirely -- useful for isolating how much of the result set it's responsible for.</div>
+    ${allFeatures.map(f => `<label style="display:block;font-weight:normal;margin:2px 0">
+      <input type="checkbox" class="featureToggle" data-key="${f.key}" ${disabled.has(f.key) ? '' : 'checked'}> ${f.label}
+    </label>`).join('')}
+  </div>`;
+}
+
 function overrideRowHtml(ticker, date) {
   return `<div class="overrideRow">
     <input type="text" class="overrideTicker" placeholder="TICKER" value="${ticker}">
@@ -531,6 +610,11 @@ function collectFormValues() {
     if (t && d) overrides[t] = d;
   });
   cfg.start_overrides = overrides;
+  const disabledFeatures = [];
+  document.querySelectorAll('.featureToggle').forEach(cb => {
+    if (!cb.checked) disabledFeatures.push(cb.dataset.key);
+  });
+  cfg.disabled_features = disabledFeatures;
   return cfg;
 }
 
@@ -568,6 +652,9 @@ async function saveSettings() {
 // ========================================================================
 // Dashboard: pipeline jobs
 // ========================================================================
+
+const JOB_LABELS = { update_data: 'Update Price Data', full_rediscovery: 'Full Rediscovery' };
+
 function fmtElapsed(startIso) {
   if (!startIso) return '';
   const secs = Math.max(0, Math.floor((Date.now() - new Date(startIso).getTime()) / 1000));
@@ -577,26 +664,23 @@ function fmtElapsed(startIso) {
 function renderDiscoveryBanner(d) {
   const box = document.getElementById('discoveryBanner');
   if (d.never_run) {
-    box.innerHTML = '<b>Full Discovery has never been run for this index.</b> Run it to generate results.';
+    box.innerHTML = '<b>Full Rediscovery has never been run for this index.</b> Run it to generate results.';
     return;
   }
-  let msg = `Last Full Discovery: ${new Date(d.completed_at).toLocaleString()} (${d.days_ago} day${d.days_ago === 1 ? '' : 's'} ago).`;
-  if (d.config_changed) msg += ' <b>Settings have changed since then</b> -- consider re-running Full Discovery.';
-  else if (d.days_ago >= 30) msg += ' <b>It has been over a month</b> -- consider re-running Full Discovery.';
+  let msg = `Last Full Rediscovery: ${new Date(d.completed_at).toLocaleString()} (${d.days_ago} day${d.days_ago === 1 ? '' : 's'} ago).`;
+  if (d.config_changed) msg += ' <b>Settings have changed since then</b> -- consider running Full Rediscovery again.';
+  else if (d.days_ago >= 30) msg += ' <b>It has been over a month</b> -- consider running Full Rediscovery again.';
   box.innerHTML = msg;
 }
 
-const JOB_LABELS = { refresh: 'Refresh', full_discovery: 'Full Discovery' };
-
 function renderJobProgress(status) {
   const box = document.getElementById('jobProgress');
-  const btns = [document.getElementById('refreshBtn'), document.getElementById('fullDiscoveryBtn')];
+  const btns = [document.getElementById('updateDataBtn'), document.getElementById('fullRediscoveryBtn')];
 
-  // Only count it as "just succeeded" if THIS client watched it go from
-  // running to done -- a stale "done" from a previous session (first poll
-  // after a page load/refresh) never sets this.
   if (previousJobStatus === 'running' && status.status === 'done') {
     successVisible = true;
+    loadPatterns();
+    loadWatchlist();
   }
   previousJobStatus = status.status;
 
@@ -612,7 +696,10 @@ function renderJobProgress(status) {
       lastRenderedMode = 'running';
     }
     document.getElementById('stageLabel').textContent = stages[idx].label;
-    document.getElementById('stageCount').textContent = `stage ${idx + 1} of ${stages.length}`;
+    const prog = status.stage_progress;
+    document.getElementById('stageCount').textContent = prog
+      ? `stage ${idx + 1} of ${stages.length} -- ${Math.floor((prog.done / prog.total) * 100)}%`
+      : `stage ${idx + 1} of ${stages.length}`;
     document.getElementById('stageElapsed').textContent = fmtElapsed(status.stage_started_at);
     document.getElementById('totalElapsed').textContent = fmtElapsed(status.started_at);
   } else if (status.status === 'error') {
@@ -647,10 +734,202 @@ async function startJob(jobName) {
   pollJobStatus();
 }
 
-document.getElementById('refreshBtn').addEventListener('click', () => startJob('refresh'));
-document.getElementById('fullDiscoveryBtn').addEventListener('click', () => startJob('full_discovery'));
+document.getElementById('updateDataBtn').addEventListener('click', () => startJob('update_data'));
+document.getElementById('fullRediscoveryBtn').addEventListener('click', () => startJob('full_rediscovery'));
 setInterval(pollJobStatus, 1000);
 pollJobStatus();
+loadWatchlist();
+
+// ========================================================================
+// Dashboard: watchlist
+// ========================================================================
+async function loadWatchlist() {
+  const status = document.getElementById('watchlistStatus');
+  status.textContent = 'Loading...';
+  const res = await fetch('/api/watchlist');
+  const matches = await res.json();
+  renderWatchlist(matches);
+}
+
+function renderWatchlist(matches) {
+  const status = document.getElementById('watchlistStatus');
+  const container = document.getElementById('watchlistCards');
+  if (!matches.length) {
+    status.textContent = '';
+    container.innerHTML = '<p class="placeholder">No current matches.</p>';
+    return;
+  }
+  const byTicker = {};
+  for (const m of matches) {
+    (byTicker[m.ticker] = byTicker[m.ticker] || []).push(m);
+  }
+  const tickers = Object.keys(byTicker).sort((a, b) => {
+    const topA = Math.max(...byTicker[a].map(m => m.historical_return));
+    const topB = Math.max(...byTicker[b].map(m => m.historical_return));
+    return topB - topA;
+  });
+  status.textContent = `${tickers.length} ticker${tickers.length === 1 ? '' : 's'} currently matching a historical pattern`;
+  container.innerHTML = tickers.map(t => {
+    const group = byTicker[t].slice().sort((a, b) => b.historical_return - a.historical_return);
+    const top = group[0];
+    const extra = group.length - 1;
+    const pct = (top.historical_return >= 0 ? '+' : '') + (top.historical_return * 100).toFixed(2) + '%';
+    return `<a class="watchlistCard" href="#stock-research?ticker=${t}" style="text-decoration:none;color:inherit;display:block">
+      <div class="ticker">${t}</div>
+      <div class="badge">${top.badge}</div>
+      <div class="return">${pct} historical return</div>
+      ${extra > 0 ? `<div class="extra">+${extra} more match${extra === 1 ? '' : 'es'}</div>` : ''}
+    </a>`;
+  }).join('');
+}
+
+// ========================================================================
+// Stock Research page
+// ========================================================================
+let srTicker = null;
+let srView = 'all';
+let srMatchRows = [], srStockRows = [];
+let srMatchSort = { col: null, ascending: true };
+let srStockSort = { col: null, ascending: true };
+let srLoadedTabs = new Set();
+
+const SR_MATCH_COLUMNS = COLUMNS;   // identical column set to Market Research
+
+const SR_STOCK_COLUMNS = [
+  { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
+  { id: 'live', label: 'Live?', html: true,
+    get: r => r.is_live ? '<span class="badge" style="background:#d9f3dc;color:#1a7a1a;padding:2px 8px;border-radius:10px;font-size:0.8em">Live now</span>' : '' },
+  { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
+  { id: 'cases', label: 'Cases for this stock', numeric: true, get: r => srView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt },
+  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r[`mean_fwd_return_${srView}`], fmt: fmtPct },
+  { id: 'edge', label: 'Edge', numeric: true, get: r => r[`edge_${srView}`], fmt: fmtPct },
+  { id: 'best', label: 'vs. Best Single Condition', html: true, get: r => {
+      const o = r[`best_single_${srView}`];
+      return o ? `${fmtPct(o.effect)} (${o.feature} bucket ${o.bucket})` : 'N/A';
+    } },
+  { id: 'hit', label: 'Hit Rate', numeric: true, get: r => r[`hit_rate_${srView}`], fmt: fmtPct0 },
+  { id: 'vsall', label: 'vs. All-stock Average', numeric: true, get: r => r[`stock_effect_${srView}`], fmt: fmtPct },
+  { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
+    fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1] },
+  { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
+];
+
+function parseTickerFromHash() {
+  const m = window.location.hash.match(/ticker=([A-Za-z.\-]+)/);
+  return m ? m[1].toUpperCase() : null;
+}
+
+async function srSearch(ticker) {
+  srTicker = ticker.toUpperCase().trim();
+  if (!srTicker) return;
+  document.getElementById('srTickerInput').value = srTicker;
+  srMatchSort = { col: 'edge', ascending: false };
+  srStockSort = { col: 'edge', ascending: false };
+  srLoadedTabs = new Set();
+  const activeTab = document.querySelector('.tabBtn.active').dataset.tab;
+  await srLoadTab(activeTab);
+}
+
+async function srLoadTab(tab) {
+  if (!srTicker) return;
+  const status = document.getElementById('srStatus');
+  status.textContent = ' Loading...';
+  if (tab === 'matching') {
+    const res = await fetch(`/api/stock-matches?ticker=${encodeURIComponent(srTicker)}`);
+    srMatchRows = await res.json();
+    srRenderMatching();
+  } else {
+    const res = await fetch(`/api/stock-research?ticker=${encodeURIComponent(srTicker)}`);
+    srStockRows = await res.json();
+    srRenderStock();
+  }
+  srLoadedTabs.add(tab);
+  status.textContent = '';
+  srRenderBaseline();
+}
+
+function srRenderBaseline() {
+  const box = document.getElementById('srBaselineDisplay');
+  const source = srMatchRows.length ? srMatchRows : srStockRows;
+  const row = source.find(r => r[`baseline_mean_${srView}`] != null);
+  box.textContent = row ? `Baseline (${srView === 'all' ? 'All Data' : 'Index-Only Data'}): ${fmtPct(row[`baseline_mean_${srView}`])}` : '';
+}
+
+function srApplyTextFilter(rows, inputId) {
+  const term = document.getElementById(inputId).value.trim().toLowerCase();
+  if (!term) return rows;
+  const tmp = document.createElement('div');
+  return rows.filter(r => {
+    tmp.innerHTML = r.conditions_html;
+    return (tmp.textContent || '').toLowerCase().includes(term);
+  });
+}
+
+function srApplySort(rows, columns, sortState) {
+  if (!sortState.col) return rows;
+  const col = columns.find(c => c.id === sortState.col);
+  const dir = sortState.ascending ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const av = col.get(a), bv = col.get(b);
+    if (col.category) return String(av).localeCompare(String(bv)) * dir;
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+    return (av - bv) * dir;
+  });
+}
+
+function srRenderGenericTable(containerId, rows, columns) {
+  const container = document.getElementById(containerId);
+  if (!rows.length) { container.innerHTML = '<p class="placeholder">No matching patterns.</p>'; return; }
+  let html = '<table><thead><tr>' + columns.map(c => `<th data-col="${c.id}" data-table="${containerId}" class="sortLabel">${c.label}</th>`).join('') + '</tr></thead><tbody>';
+  for (const row of rows) {
+    html += '<tr>' + columns.map(c => `<td>${c.fmt ? c.fmt(c.get(row)) : c.get(row)}</td>`).join('') + '</tr>';
+  }
+  html += '</tbody></table>';
+  container.innerHTML = html;
+  container.querySelectorAll('th').forEach(th => {
+    th.addEventListener('click', () => {
+      const id = th.dataset.col;
+      const isMatching = containerId === 'srMatchTable';
+      const state = isMatching ? srMatchSort : srStockSort;
+      const newState = state.col === id ? { col: id, ascending: !state.ascending } : { col: id, ascending: true };
+      if (isMatching) { srMatchSort = newState; srRenderMatching(); } else { srStockSort = newState; srRenderStock(); }
+    });
+  });
+}
+
+function srRenderMatching() {
+  let rows = srApplyTextFilter(srMatchRows.filter(r => r[`effect_${srView}`] != null), 'srMatchFilter');
+  rows = srApplySort(rows, SR_MATCH_COLUMNS, srMatchSort);
+  srRenderGenericTable('srMatchTable', rows, SR_MATCH_COLUMNS);
+}
+
+function srRenderStock() {
+  let rows = srApplyTextFilter(srStockRows, 'srStockFilter');
+  rows = srApplySort(rows, SR_STOCK_COLUMNS, srStockSort);
+  srRenderGenericTable('srStockTable', rows, SR_STOCK_COLUMNS);
+}
+
+document.getElementById('srSearchBtn').addEventListener('click', () => srSearch(document.getElementById('srTickerInput').value));
+document.getElementById('srTickerInput').addEventListener('keydown', e => { if (e.key === 'Enter') srSearch(e.target.value); });
+document.getElementById('srMatchFilter').addEventListener('input', srRenderMatching);
+document.getElementById('srStockFilter').addEventListener('input', srRenderStock);
+document.getElementById('srViewToggle').addEventListener('click', () => {
+  srView = srView === 'all' ? 'flagged' : 'all';
+  document.getElementById('srViewToggle').textContent = `View: ${srView === 'all' ? 'All Data' : 'Index-Only Data'}`;
+  if (srLoadedTabs.has('matching')) srRenderMatching();
+  if (srLoadedTabs.has('perstock')) srRenderStock();
+  srRenderBaseline();
+});
+document.querySelectorAll('.tabBtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabBtn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tabPanel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
+    if (!srLoadedTabs.has(btn.dataset.tab)) srLoadTab(btn.dataset.tab);
+  });
+});
 
 document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
 document.getElementById('resetDefaultsBtn').addEventListener('click', resetDefaults);

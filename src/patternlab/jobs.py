@@ -20,8 +20,17 @@ STAGES = [
 STAGE_BY_ID = {s["id"]: s for s in STAGES}
 
 JOBS = {
-    "refresh": ["m1", "m2"],
-    "full_discovery": ["m1", "m2", "m3", "m4", "m5", "m6"],
+    "update_data": ["m1", "m2"],
+    "full_rediscovery": ["m1", "m2", "m3", "m4", "m5", "m6"],
+}
+
+# Extra CLI args per (job, stage). update_data's M1 only fetches bars newer
+# than the cache (cheap, bounded adjustment drift). full_rediscovery's M1
+# does a genuine full redownload (slower, but re-derives dividend/split
+# adjustment correctly across all history) -- see fetch.py's get_prices().
+STAGE_ARGS = {
+    ("update_data", "m1"): ["--incremental"],
+    ("full_rediscovery", "m1"): ["--refresh"],
 }
 
 _lock = threading.Lock()
@@ -39,7 +48,19 @@ _state = {
 
 def get_status() -> dict:
     with _lock:
-        return dict(_state)
+        state = dict(_state)
+    if state["status"] == "running" and state["stage_ids"]:
+        stage_id = state["stage_ids"][state["current_index"]]
+        if stage_id in ("m4", "m5"):
+            from patternlab.config import read_raw_config
+            cfg = read_raw_config()
+            p = PROJECT_ROOT / cfg.get("data_dir", "data") / f"progress_{cfg['index']}_{stage_id}.json"
+            if p.exists():
+                try:
+                    state["stage_progress"] = json.loads(p.read_text())
+                except (json.JSONDecodeError, OSError):
+                    pass
+    return state
 
 
 def is_running() -> bool:
@@ -65,10 +86,11 @@ def _run_chain(job_name: str, stage_ids: list[str]):
             _state["current_index"] = i
             _state["stage_started_at"] = now()
         stage = STAGE_BY_ID[stage_id]
+        extra_args = STAGE_ARGS.get((job_name, stage_id), [])
         log_path = _log_path(job_name, stage_id)
         with open(log_path, "w", encoding="utf-8") as logf:
             proc = subprocess.run(
-                [sys.executable, str(PROJECT_ROOT / stage["script"])],
+                [sys.executable, str(PROJECT_ROOT / stage["script"]), *extra_args],
                 cwd=PROJECT_ROOT, stdout=logf, stderr=subprocess.STDOUT)
         if proc.returncode != 0:
             tail = log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
@@ -77,7 +99,7 @@ def _run_chain(job_name: str, stage_ids: list[str]):
                               error=f"{stage['label']} ({stage_id}) failed. Last output:\n{tail}")
             return
 
-    if job_name == "full_discovery":
+    if job_name == "full_rediscovery":
         _record_discovery_completion()
 
     with _lock:

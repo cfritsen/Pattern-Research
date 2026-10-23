@@ -8,10 +8,12 @@ from patternlab.config import (
     validate_config, ConfigError, VALID_HORIZONS,
 )
 from patternlab.db import connect
-from patternlab.reports import build_pattern_context, pattern_view, to_api_rows
-from patternlab.humanize import humanize_pattern_view
-from patternlab.universe_fetch import PROVIDERS
+from patternlab.reports import build_pattern_context, pattern_view, to_api_rows, stock_view, stock_to_api_rows
+from patternlab.humanize import badge_text, FEATURE_INFO, ALL_FEATURES
+from patternlab.universe_fetch import get_universe, get_index_proxy, PROVIDERS
 from patternlab.jobs import start_job, get_status, discovery_status, STAGES
+from patternlab.watchlist import compute_watchlist, load_edges
+
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "web" / "static"
 app = Flask(__name__, static_folder=None)
@@ -46,6 +48,8 @@ FIELD_METADATA = [
      "help": "Feature pairs with |Spearman correlation| above this are excluded from 2-condition testing."},
     {"key": "test_all_buckets", "label": "Test all buckets (full grid)", "type": "boolean",
      "help": "Off: 2-condition search only tests the extreme buckets of each continuous feature (faster). On: tests the full 5x5 grid (much slower)."},
+    {"key": "multithreading", "label": "Multithreading", "type": "boolean",
+     "help": "Run the 2-condition search across multiple CPU cores instead of one."},
 ]
 
 
@@ -100,7 +104,13 @@ def api_get_config():
     for f in meta:
         if f["key"] == "index":
             f["options"] = sorted(PROVIDERS)
-    return jsonify({"config": cfg, "fields": meta, "errors": errors})
+        if f["key"] == "multithreading":
+            from patternlab.parallel import resolved_worker_count
+            on_count = resolved_worker_count({**cfg, "multithreading": True})
+            f["help"] += f" (currently resolves to {on_count} worker{'s' if on_count != 1 else ''} when on)"
+    feature_meta = [{"key": f, "label": FEATURE_INFO[f][0] if f in FEATURE_INFO else f.capitalize()}
+                    for f in ALL_FEATURES]
+    return jsonify({"config": cfg, "fields": meta, "errors": errors, "all_features": feature_meta})
 
 
 @app.post("/api/config")
@@ -151,6 +161,67 @@ def api_jobs_status():
     status["stages_meta"] = STAGES
     status["discovery"] = discovery_status()
     return jsonify(status)
+
+@app.get("/api/watchlist")
+def api_watchlist():
+    cfg0 = read_raw_config()
+    index = request.args.get("index", cfg0.get("index", "sp500"))
+    if index not in PROVIDERS:
+        return jsonify({"error": f"Unknown index {index!r}"}), 400
+
+    cfg = _cfg_for(index)
+    uni = get_universe(cfg)
+    conn = connect(cfg)
+    matches = compute_watchlist(cfg, uni, conn)
+    for m in matches:
+        m["badge"] = badge_text(m["conditions"])
+    return jsonify(matches)
+
+@app.get("/api/stock-matches")
+def api_stock_matches():
+    cfg0 = read_raw_config()
+    index = request.args.get("index", cfg0.get("index", "sp500"))
+    ticker = request.args.get("ticker", "").upper().strip()
+    if index not in PROVIDERS:
+        return jsonify({"error": f"Unknown index {index!r}"}), 400
+    if not ticker:
+        return jsonify({"error": "ticker is required"}), 400
+
+    cfg = _cfg_for(index)
+    uni = get_universe(cfg)
+    conn = connect(cfg)
+    matches = compute_watchlist(cfg, uni, conn, only_ticker=ticker)
+    matching_ids = {m["pattern_id"] for m in matches}
+
+    edges_by_feature = load_edges(conn)
+    context = build_pattern_context(conn)
+    if context.empty or not matching_ids:
+        return jsonify([])
+    filtered = context.loc[context.index.isin(matching_ids)]
+    return jsonify(to_api_rows(filtered, edges_by_feature))
+
+
+@app.get("/api/stock-research")
+def api_stock_research():
+    cfg0 = read_raw_config()
+    index = request.args.get("index", cfg0.get("index", "sp500"))
+    ticker = request.args.get("ticker", "").upper().strip()
+    if index not in PROVIDERS:
+        return jsonify({"error": f"Unknown index {index!r}"}), 400
+    if not ticker:
+        return jsonify({"error": "ticker is required"}), 400
+
+    cfg = _cfg_for(index)
+    uni = get_universe(cfg)
+    conn = connect(cfg)
+    edges_by_feature = load_edges(conn)
+    context = build_pattern_context(conn)
+    sdf = stock_view(conn, ticker, context, top_n=100000)
+
+    live_matches = compute_watchlist(cfg, uni, conn, only_ticker=ticker)
+    live_ids = {m["pattern_id"] for m in live_matches}
+
+    return jsonify(stock_to_api_rows(sdf, edges_by_feature, live_ids))
 
 if __name__ == "__main__":
     # threaded=True so status polls are served while a job's background

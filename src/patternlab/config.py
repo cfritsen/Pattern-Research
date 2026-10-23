@@ -9,7 +9,8 @@ REQUIRED_KEYS = [
     "index", "data_dir", "report_dir", "start_date",
     "use_stooq_fallback", "jump_threshold", "pause_seconds",
     "horizon", "move_atr", "discovery_frac", "cost",
-    "corr_prune_threshold", "test_all_buckets",
+    "corr_prune_threshold", "test_all_buckets", "multithreading",
+    "disabled_features"
 ]
 
 
@@ -76,7 +77,7 @@ def validate_config(cfg: dict, path: str = "config.yaml") -> None:
     if "pause_seconds" in cfg and (not isinstance(cfg["pause_seconds"], (int, float)) or cfg["pause_seconds"] < 0):
         errors.append(f"pause_seconds={cfg['pause_seconds']!r} must be zero or positive.")
 
-    for key in ("test_all_buckets", "use_stooq_fallback"):
+    for key in ("test_all_buckets", "use_stooq_fallback", "multithreading"):
         if key in cfg and not isinstance(cfg[key], bool):
             errors.append(f"{key}={cfg[key]!r} must be true or false.")
 
@@ -100,6 +101,16 @@ def validate_config(cfg: dict, path: str = "config.yaml") -> None:
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(date_str)):
                 errors.append(
                     f"start_overrides[{ticker!r}]={date_str!r} must be a YYYY-MM-DD date string.")
+
+    if "disabled_features" in cfg:
+        if not isinstance(cfg["disabled_features"], list) or not all(isinstance(f, str) for f in cfg["disabled_features"]):
+            errors.append("disabled_features must be a list of feature-name strings.")
+        else:
+            from patternlab.humanize import ALL_FEATURES
+            unknown = [f for f in cfg["disabled_features"] if f not in ALL_FEATURES]
+            if unknown:
+                errors.append(f"disabled_features contains unknown feature name(s): {unknown}. "
+                              f"Valid names: {ALL_FEATURES}.")
 
     if errors:
         raise ConfigError(f"{path}: " + "; ".join(errors))

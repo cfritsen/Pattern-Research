@@ -5,11 +5,11 @@ import pandas as pd
 from patternlab.config import load_config, ensure_dirs, manifest_path
 from patternlab.universe_fetch import get_universe
 from patternlab.buckets import CATEGORICAL
-from patternlab.search import load_panel, build_buckets, evaluate_condition
+from patternlab.search import load_panel, build_buckets
 from patternlab.correlation import spearman_matrix, prune_pairs
-from patternlab.overlap import bucket_overlap_ratio
 from patternlab.stats import benjamini_hochberg, bh_qvalues
 from patternlab.db import connect, insert_run, get_or_create_pattern, insert_result
+from patternlab.parallel import run_search
 
 OVERLAP_FLAG = 1.5
 
@@ -19,13 +19,19 @@ def main() -> None:
     ensure_dirs(cfg)
     uni = get_universe(cfg)
     h0 = cfg["horizon"]
+    progress_path = Path(cfg["data_dir"]) / f"progress_{cfg['index']}_m5.json"
+    progress_path.unlink(missing_ok=True)
     cost = cfg.get("cost", 0.001)
     corr_threshold = cfg.get("corr_prune_threshold", 0.7)
     extremes_only = not cfg.get("test_all_buckets", False)
 
+    # Loaded here too (not just inside each worker) because the main process
+    # needs the bucket columns/labels and the correlation matrix before any
+    # worker starts.
     panel, feature_cols = load_panel(cfg, uni)
+    disabled = set(cfg.get("disabled_features", []))
+    feature_cols = [c for c in feature_cols if c not in disabled]
     is_disc = panel[f"split_{h0}"] == 0
-    is_conf = panel[f"split_{h0}"] == 1
     buckets, _ = build_buckets(panel, feature_cols, is_disc)
 
     continuous = [c for c in buckets.columns if c not in CATEGORICAL]
@@ -47,7 +53,10 @@ def main() -> None:
     run_id = insert_run(conn, {"horizon": h0, "move_atr": cfg["move_atr"], "n_conditions": 2,
                                "corr_prune_threshold": corr_threshold, "extremes_only": extremes_only},
                         manifest["data_version"], manifest["universe_snapshot"])
-    # Same cleanup as m4_search.py, for 2-condition results.
+
+    # Clear prior 2-condition results before inserting this run's -- same
+    # reasoning as m4_search.py: otherwise re-running accumulates duplicate
+    # rows per pattern across runs.
     conn.execute("DELETE FROM pattern_results_pooled WHERE pattern_id IN "
                  "(SELECT pattern_id FROM patterns WHERE n_conditions = 2)")
     conn.commit()
@@ -70,36 +79,30 @@ def main() -> None:
             labels = [0, 4]
         bucket_labels[c] = labels
 
-    results, tested = [], 0
-    for view, vmask in (("all", pd.Series(True, index=panel.index)), ("flagged", panel["in_index"])):
-        market_by_split = {
-            split_name: panel[vmask & smask][[f"fwd_ret_{h0}", "date"]].rename(
-                columns={f"fwd_ret_{h0}": "fwd_ret"}).groupby("date").mean()
-            for split_name, smask in (("discovery", is_disc), ("confirm", is_conf))
-        }
+    tasks = []
+    for view in ("all", "flagged"):
         for a, b in pairs_to_test:
             for la in bucket_labels[a]:
                 for lb in bucket_labels[b]:
-                    mask_ab = vmask & (buckets[a] == la) & (buckets[b] == lb)
-                    for split_name, smask in (("discovery", is_disc), ("confirm", is_conf)):
-                        sub = panel[mask_ab & smask]
-                        market_sub = market_by_split[split_name]
-                        tested += 1
-                        res = evaluate_condition(sub, market_sub, view, h0)
-                        if res is None:
-                            continue
-                        scope = vmask & smask
-                        ov = bucket_overlap_ratio(buckets[a], la, buckets[b], lb, scope)
-                        tag = " [overlapping conditions]" if (not np.isnan(ov) and
-                              (ov > OVERLAP_FLAG or ov < 1 / OVERLAP_FLAG)) else ""
-                        desc = f"{a} in bucket {la} AND {b} in bucket {lb}{tag}"
-                        pid = get_or_create_pattern(conn, desc,
-                                                    [{"feature": a, "bucket": int(la)}, {"feature": b, "bucket": int(lb)}])
-                        res.update(pattern_id=pid, run_id=run_id, view=view, horizon=h0, outcome_type="direction",
-                                  split=split_name, overlap_ratio=ov, passed=0, q_value=None, baseline_hit_rate=None)
-                        results.append(res)
+                    tasks.append((view, a, la, b, lb))
 
-    print(f"Tested {tested} 2-condition combinations, {len(results)} had enough occurrences")
+    progress_path = Path(cfg["data_dir"]) / f"progress_{cfg['index']}_m5.json"
+    raw_results = run_search(cfg, tasks, "m5", progress_path)
+    tested = len(tasks) * 2
+
+    results = []
+    for r in raw_results:
+        tag = " [overlapping conditions]" if (not np.isnan(r["overlap_ratio"]) and
+              (r["overlap_ratio"] > OVERLAP_FLAG or r["overlap_ratio"] < 1 / OVERLAP_FLAG)) else ""
+        desc = f"{r['feature_a']} in bucket {r['bucket_a']} AND {r['feature_b']} in bucket {r['bucket_b']}{tag}"
+        pid = get_or_create_pattern(conn, desc,
+                                    [{"feature": r["feature_a"], "bucket": r["bucket_a"]},
+                                     {"feature": r["feature_b"], "bucket": r["bucket_b"]}])
+        r = dict(r)
+        r.update(pattern_id=pid, run_id=run_id, horizon=h0, outcome_type="direction", passed=0, q_value=None)
+        results.append(r)
+
+    print(f"Tested {tested} 2-condition combinations")
     df2 = pd.DataFrame(results)
 
     # --- joint FDR across M4's stored discovery p-values and these new ones ---

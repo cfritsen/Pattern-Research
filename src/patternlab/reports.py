@@ -164,7 +164,9 @@ def stock_view(conn, ticker: str, context: pd.DataFrame, top_n: int) -> pd.DataF
     out["reference_mean"] = ctx["reference_mean"]
     out["rank_key"] = out[["mean_fwd_return_all", "mean_fwd_return_flagged"]].abs().max(axis=1)
 
-    return out.sort_values("rank_key", ascending=False).head(top_n).reset_index(drop=True)
+    out = out.sort_values("rank_key", ascending=False).head(top_n)
+    out.index.name = "pattern_id"
+    return out.reset_index()
 
 def _clean(v):
     if v is None:
@@ -229,6 +231,37 @@ def to_api_rows(context: pd.DataFrame, edges_by_feature: dict) -> list[dict]:
             entry[f"best_single_html_{view}"] = (
                 f"{fmt_pct_sign(bs[0])} ({describe_bucket(bs[1], bs[2], edges_by_feature.get(bs[1]))})"
                 if bs else "N/A"
+            )
+        rows.append(entry)
+    return rows
+
+def stock_to_api_rows(stock_df: pd.DataFrame, edges_by_feature: dict, live_pattern_ids: set[int] | None = None) -> list[dict]:
+    if stock_df.empty:
+        return []
+    live_pattern_ids = live_pattern_ids or set()
+    rows = []
+    for _, row in stock_df.iterrows():
+        pid = int(row["pattern_id"])
+        entry = {
+            "pattern_id": pid,
+            "is_live": pid in live_pattern_ids,
+            "conditions_html": conditions_html(row["description"], edges_by_feature),
+            "n_all": _clean(row["n_all"]),
+            "n_flagged": _clean(row["n_flagged"]),
+            "pre_index_bias": _pre_index_bias_frac(row["n_all"], row["n_flagged"]),
+            "overlap_ratio": _clean(row["overlap_ratio"]),
+            "top3_year_share": _clean(row["top3_year_share"]),
+            "mean_excl_top3": _clean(row["mean_excl_top3"]),
+            "reference_mean": _clean(row["reference_mean"]),
+        }
+        for view in ("all", "flagged"):
+            entry[f"mean_fwd_return_{view}"] = _clean(row[f"mean_fwd_return_{view}"])
+            entry[f"edge_{view}"] = _clean(row[f"edge_{view}"])
+            entry[f"hit_rate_{view}"] = _clean(row[f"hit_rate_{view}"])
+            entry[f"stock_effect_{view}"] = _clean(row[f"stock_effect_{view}"])
+            bs = row[f"best_single_{view}"]
+            entry[f"best_single_{view}"] = (
+                {"effect": _clean(bs[0]), "feature": bs[1], "bucket": int(bs[2])} if bs else None
             )
         rows.append(entry)
     return rows

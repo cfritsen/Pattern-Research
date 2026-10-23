@@ -8,7 +8,7 @@ from patternlab.fetch import get_prices, data_version
 from patternlab.quality import check_prices, failed_row
 
 
-def main(refresh: bool, refresh_universe: bool, limit: int) -> None:
+def main(refresh: bool, incremental: bool, refresh_universe: bool, limit: int) -> None:
     cfg = load_config()
     ensure_dirs(cfg)
     uni = get_universe(cfg, refresh=refresh_universe)
@@ -21,15 +21,18 @@ def main(refresh: bool, refresh_universe: bool, limit: int) -> None:
         targets = targets[:limit]
     targets = list(dict.fromkeys(targets + [proxy]))
 
-    rows, manifest = [], {}
+    rows, manifest, new_rows_total = [], {}, 0
     for t in targets:
         try:
-            df, meta = get_prices(t, cfg, refresh=refresh)
+            df, meta = get_prices(t, cfg, refresh=refresh, incremental=incremental)
             manifest[t] = meta
             rows.append(check_prices(t, df, cfg["jump_threshold"]))
-            print(f"ok    {t:8s} {meta['rows']:6d} rows  {meta['first']} -> {meta['last']}  [{meta['source']}]")
+            tag = "ok   "
             if meta["fetched_at"]:
+                print(f"{tag} {t:8s} {meta['rows']:6d} rows  {meta['first']} -> {meta['last']}  [{meta['source']}]")
                 time.sleep(cfg["pause_seconds"])
+            elif incremental:
+                print(f"{'=' * 5} {t:8s} {meta['rows']:6d} rows  no new bars (already current)")
         except Exception as e:
             rows.append(failed_row(t, "fetch_failed", str(e)))
             print(f"FAIL  {t}: {e}")
@@ -51,8 +54,9 @@ def main(refresh: bool, refresh_universe: bool, limit: int) -> None:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--refresh", action="store_true", help="re-download prices even if cached")
+    ap.add_argument("--refresh", action="store_true", help="re-download prices even if cached (full history)")
+    ap.add_argument("--incremental", action="store_true", help="fetch only bars newer than the cache (Fetch New)")
     ap.add_argument("--refresh-universe", action="store_true", help="pull a new constituent snapshot")
     ap.add_argument("--limit", type=int, default=0, help="only fetch the first N tickers (testing)")
     a = ap.parse_args()
-    main(a.refresh, a.refresh_universe, a.limit)
+    main(a.refresh, a.incremental, a.refresh_universe, a.limit)

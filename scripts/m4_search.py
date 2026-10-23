@@ -4,10 +4,11 @@ import numpy as np
 import pandas as pd
 from patternlab.config import load_config, ensure_dirs, manifest_path
 from patternlab.universe_fetch import get_universe
-from patternlab.buckets import bucket_feature, CATEGORICAL
-from patternlab.stats import thin_non_overlapping, cluster_bootstrap_pvalue, benjamini_hochberg, breadth
+from patternlab.buckets import CATEGORICAL
+from patternlab.search import load_panel, build_buckets
+from patternlab.stats import benjamini_hochberg
 from patternlab.db import connect, insert_run, get_or_create_pattern, insert_result
-from patternlab.search import load_panel, evaluate_condition, MIN_OCCURRENCES, COST
+from patternlab.parallel import run_search
 
 
 def main() -> None:
@@ -15,61 +16,56 @@ def main() -> None:
     ensure_dirs(cfg)
     uni = get_universe(cfg)
     h0 = cfg["horizon"]
+    progress_path = Path(cfg["data_dir"]) / f"progress_{cfg['index']}_m4.json"
+    progress_path.unlink(missing_ok=True)
+    # Loaded here too (not just inside each worker) because the main process
+    # needs the bucket columns/labels to build the task list before any
+    # worker starts.
     panel, feature_cols = load_panel(cfg, uni)
+    disabled = set(cfg.get("disabled_features", []))
+    feature_cols = [c for c in feature_cols if c not in disabled]
     is_disc = panel[f"split_{h0}"] == 0
-    is_conf = panel[f"split_{h0}"] == 1
+    buckets, _ = build_buckets(panel, feature_cols, is_disc)
 
     manifest = json.loads(manifest_path(cfg).read_text())
     conn = connect(cfg)
     run_id = insert_run(conn, {"horizon": h0, "move_atr": cfg["move_atr"], "n_conditions": 1},
                         manifest["data_version"], manifest["universe_snapshot"])
+
     # Clear prior single-condition results before inserting this run's --
-    # otherwise re-running Full Discovery accumulates duplicate rows per
-    # pattern across runs, which breaks every downstream query that assumes
-    # one row per (pattern_id, view, split).
+    # otherwise re-running accumulates duplicate rows per pattern across
+    # runs, which breaks every downstream query that assumes one row per
+    # (pattern_id, view, split).
     conn.execute("DELETE FROM pattern_results_pooled WHERE pattern_id IN "
                  "(SELECT pattern_id FROM patterns WHERE n_conditions = 1)")
     conn.commit()
 
-    bucket_frames, edge_log = {}, {}
-    for col in feature_cols:
-        if col.startswith(("fwd_ret_", "split_")):
-            continue
-        b, edges = bucket_feature(panel[col], is_disc)
-        bucket_frames[col] = b
-        edge_log[col] = edges
-    buckets = pd.DataFrame(bucket_frames)
-
-    results, tested = [], 0
-    for view, vmask in (("all", pd.Series(True, index=panel.index)),
-                        ("flagged", panel["in_index"])):
+    tasks = []
+    for view in ("all", "flagged"):
         for col in buckets.columns:
             n_labels = 5 if col not in CATEGORICAL else int(buckets[col].max() + 1)
             for label in range(n_labels):
-                mask = vmask & (buckets[col] == label)
-                for split_name, smask in (("discovery", is_disc), ("confirm", is_conf)):
-                    sub = panel[mask & smask]
-                    market_sub = panel[vmask & smask][[f"fwd_ret_{h0}", "date"]].rename(
-                        columns={f"fwd_ret_{h0}": "fwd_ret"}).groupby("date").mean()
-                    tested += 1
-                    r = evaluate_condition(sub, market_sub, view, h0)
-                    if r is None:
-                        continue
-                    desc = f"{col} in bucket {label}"
-                    pid = get_or_create_pattern(conn, desc, [{"feature": col, "bucket": int(label)}])
-                    r.update(pattern_id=pid, run_id=run_id, view=view, horizon=h0,
-                            outcome_type="direction", split=split_name, passed=0, q_value=None)
-                    results.append(r)
+                tasks.append((view, col, label))
+
+    progress_path = Path(cfg["data_dir"]) / f"progress_{cfg['index']}_m4.json"
+    raw_results = run_search(cfg, tasks, "m4", progress_path)
+    tested = len(tasks) * 2   # each task covers both splits
+
+    results = []
+    for r in raw_results:
+        desc = f"{r['feature']} in bucket {r['bucket']}"
+        pid = get_or_create_pattern(conn, desc, [{"feature": r["feature"], "bucket": r["bucket"]}])
+        r = dict(r)
+        r.update(pattern_id=pid, run_id=run_id, horizon=h0, outcome_type="direction",
+                 passed=0, q_value=None)
+        results.append(r)
 
     if results:
         df = pd.DataFrame(results)
         disc_mask = df["split"] == "discovery"
-        q = np.full(len(df), np.nan)
-        q[disc_mask.to_numpy()] = np.nan  # placeholder; BH computed below on discovery p-values only
         pv = df.loc[disc_mask, "p_value"].to_numpy()
         passed = benjamini_hochberg(pv, q=0.05)
         df.loc[disc_mask, "passed"] = passed.astype(int)
-        # propagate discovery pass/fail to the matching confirm row of the same pattern/view
         pass_map = dict(zip(df.loc[disc_mask, "pattern_id"], passed))
         df.loc[~disc_mask, "passed"] = df.loc[~disc_mask, "pattern_id"].map(pass_map).fillna(0).astype(int)
 

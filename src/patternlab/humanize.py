@@ -32,6 +32,7 @@ FEATURE_INFO = {
     "dist_52w_high": ("52-week High Distance", "Deep Pullback from 52-week High", "Near 52-week High"),
     "dist_52w_low": ("52-week Low Distance", "Near 52-week Low", "Far from 52-week Low"),
 }
+ALL_FEATURES = list(FEATURE_INFO.keys()) + ["dow", "month"]
 MONTH_NAMES = {i: calendar.month_name[i] for i in range(1, 13)}
 DOW_NAMES = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday"}
 
@@ -212,3 +213,28 @@ def humanize_stock_view(df: pd.DataFrame, edges_by_feature: dict[str, list[float
     out["Year Concentration"] = [concentration_note(t, m, r) for t, m, r in
                                  zip(df["top3_year_share"], df["mean_excl_top3"], df["reference_mean"])]
     return out
+
+
+FEATURE_ABBR = {
+    "ret_1": "1d Ret", "ret_3": "3d Ret", "ret_5": "5d Ret", "ret_10": "10d Ret", "ret_20": "20d Ret",
+    "dist_sma20_atr": "SMA20", "dist_sma50_atr": "SMA50", "dist_sma200_atr": "SMA200",
+    "rsi14": "RSI", "macd_hist_pct": "MACD", "atr_pct": "Volatility", "range_comp_10": "Range",
+    "gap_pct": "Gap", "body_ratio": "Body", "upper_wick_ratio": "U.Wick", "lower_wick_ratio": "L.Wick",
+    "close_loc": "Close Loc", "streak": "Streak", "vol_rel_20": "Volume",
+    "rel_strength_20": "Rel.Str", "dist_52w_high": "Pullback", "dist_52w_low": "52w Low",
+}
+DOW_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+
+def badge_text(conditions: list[dict]) -> str:
+    """Short combined label for a watchlist card, e.g. 'RSI/Nov' or 'Pullback'."""
+    parts = []
+    for c in conditions:
+        f, b = c["feature"], c["bucket"]
+        if f == "month":
+            parts.append(calendar.month_abbr[b] if 1 <= b <= 12 else f"M{b}")
+        elif f == "dow":
+            parts.append(DOW_ABBR[b] if 0 <= b < 5 else f"D{b}")
+        else:
+            parts.append(FEATURE_ABBR.get(f, f))
+    return "/".join(parts)

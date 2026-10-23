@@ -4,6 +4,7 @@ import json
 import numpy as np
 import pandas as pd
 
+
 def fmt_pct_sign(v) -> str:
     return f"{v:+.2%}"
 
@@ -33,9 +34,7 @@ def best_single(conditions: list[dict], view: str, lookup: dict):
 
 def build_pattern_context(conn) -> pd.DataFrame:
     qualifying = pd.read_sql(
-        "SELECT DISTINCT pattern_id FROM pattern_results_pooled WHERE split='discovery' AND passed=1 "
-        "AND run_id IN (SELECT MAX(run_id) FROM runs WHERE n_conditions=1 "
-        "UNION SELECT MAX(run_id) FROM runs WHERE n_conditions=2)", conn)
+        "SELECT DISTINCT pattern_id FROM pattern_results_pooled WHERE split='discovery' AND passed=1", conn)
     ids = tuple(qualifying["pattern_id"].tolist())
     if not ids:
         return pd.DataFrame()
@@ -43,11 +42,10 @@ def build_pattern_context(conn) -> pd.DataFrame:
     df = pd.read_sql(
         f"SELECT r.pattern_id, p.description, p.conditions_json, r.view, r.split, r.passed, "
         f"r.n_occurrences, r.mean_fwd_return, r.baseline_mean, r.effect, r.q_value, "
-        f"r.breadth_stocks, r.breadth_years, r.overlap_ratio, r.top3_year_share, r.mean_excl_top3 "
+        f"r.hit_rate, r.breadth_stocks, r.breadth_years, r.overlap_ratio, r.top3_year_share, "
+        f"r.mean_excl_top3 "
         f"FROM pattern_results_pooled r JOIN patterns p ON p.pattern_id = r.pattern_id "
-        f"WHERE r.pattern_id IN ({placeholders}) "
-        f"AND r.run_id IN (SELECT MAX(run_id) FROM runs WHERE n_conditions=1 "
-        f"UNION SELECT MAX(run_id) FROM runs WHERE n_conditions=2)", conn, params=ids)
+        f"WHERE r.pattern_id IN ({placeholders})", conn, params=ids)
 
     lookup = load_single_condition_lookup(conn)
     disc = df[df["split"] == "discovery"].copy()
@@ -69,7 +67,7 @@ def build_pattern_context(conn) -> pd.DataFrame:
     passed_flagged = flagged_rows["passed"].fillna(0).astype(bool)
 
     for col in ["mean_fwd_return", "baseline_mean", "effect", "confirm_mean_fwd_return",
-               "q_value", "breadth_stocks", "breadth_years"]:
+               "q_value", "hit_rate", "breadth_stocks", "breadth_years"]:
         merged[f"{col}_all"] = all_rows[col].where(passed_all)
         merged[f"{col}_flagged"] = flagged_rows[col].where(passed_flagged)
 
@@ -254,6 +252,8 @@ def stock_to_api_rows(stock_df: pd.DataFrame, edges_by_feature: dict, live_patte
             "mean_excl_top3": _clean(row["mean_excl_top3"]),
             "reference_mean": _clean(row["reference_mean"]),
         }
+        entry["baseline_mean_all"] = _clean(row["baseline_mean_all"])
+        entry["baseline_mean_flagged"] = _clean(row["baseline_mean_flagged"])
         for view in ("all", "flagged"):
             entry[f"mean_fwd_return_{view}"] = _clean(row[f"mean_fwd_return_{view}"])
             entry[f"edge_{view}"] = _clean(row[f"edge_{view}"])

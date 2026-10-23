@@ -8,11 +8,11 @@ from patternlab.config import (
     validate_config, ConfigError, VALID_HORIZONS,
 )
 from patternlab.db import connect
-from patternlab.reports import build_pattern_context, pattern_view, to_api_rows, stock_view, stock_to_api_rows
+from patternlab.reports import build_pattern_context, pattern_view, to_api_rows, stock_view, stock_to_api_rows, passes_direction_filter
 from patternlab.humanize import badge_text, FEATURE_INFO, ALL_FEATURES
 from patternlab.universe_fetch import get_universe, get_index_proxy, PROVIDERS
 from patternlab.jobs import start_job, get_status, discovery_status, STAGES
-from patternlab.watchlist import compute_watchlist, load_edges
+from patternlab.watchlist import compute_watchlist, load_edges, compute_matching_table, matching_table_to_api_rows
 
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "web" / "static"
@@ -177,29 +177,6 @@ def api_watchlist():
         m["badge"] = badge_text(m["conditions"])
     return jsonify(matches)
 
-@app.get("/api/stock-matches")
-def api_stock_matches():
-    cfg0 = read_raw_config()
-    index = request.args.get("index", cfg0.get("index", "sp500"))
-    ticker = request.args.get("ticker", "").upper().strip()
-    if index not in PROVIDERS:
-        return jsonify({"error": f"Unknown index {index!r}"}), 400
-    if not ticker:
-        return jsonify({"error": "ticker is required"}), 400
-
-    cfg = _cfg_for(index)
-    uni = get_universe(cfg)
-    conn = connect(cfg)
-    matches = compute_watchlist(cfg, uni, conn, only_ticker=ticker)
-    matching_ids = {m["pattern_id"] for m in matches}
-
-    edges_by_feature = load_edges(conn)
-    context = build_pattern_context(conn)
-    if context.empty or not matching_ids:
-        return jsonify([])
-    filtered = context.loc[context.index.isin(matching_ids)]
-    return jsonify(to_api_rows(filtered, edges_by_feature))
-
 
 @app.get("/api/stock-research")
 def api_stock_research():
@@ -216,12 +193,32 @@ def api_stock_research():
     conn = connect(cfg)
     edges_by_feature = load_edges(conn)
     context = build_pattern_context(conn)
-    sdf = stock_view(conn, ticker, context, top_n=100000)
+    # Same direction-consistency filter Market Research and the Watchlist
+    # already apply -- without it, Per Stock showed patterns that had
+    # already been excluded everywhere else (confirm-period reversals).
+    kept = context[context.apply(passes_direction_filter, axis=1)] if not context.empty else context
+    sdf = stock_view(conn, ticker, kept, top_n=100000)
 
     live_matches = compute_watchlist(cfg, uni, conn, only_ticker=ticker)
     live_ids = {m["pattern_id"] for m in live_matches}
 
     return jsonify(stock_to_api_rows(sdf, edges_by_feature, live_ids))
+
+@app.get("/api/stock-matching")
+def api_stock_matching():
+    cfg0 = read_raw_config()
+    index = request.args.get("index", cfg0.get("index", "sp500"))
+    ticker = request.args.get("ticker", "").upper().strip()
+    if index not in PROVIDERS:
+        return jsonify({"error": f"Unknown index {index!r}"}), 400
+    if not ticker:
+        return jsonify({"error": "ticker is required"}), 400
+    cfg = _cfg_for(index)
+    uni = get_universe(cfg)
+    conn = connect(cfg)
+    edges_by_feature = load_edges(conn)
+    rows = compute_matching_table(cfg, uni, conn, ticker)
+    return jsonify(matching_table_to_api_rows(rows, edges_by_feature))
 
 if __name__ == "__main__":
     # threaded=True so status polls are served while a job's background

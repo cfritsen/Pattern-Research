@@ -106,6 +106,9 @@
     </div>
     <div id="jobProgress"></div>
     <h2>Watchlist</h2>
+    <div class="controls">
+      <label>Show top <input id="watchlistTopN" type="number" value="10" min="1"></label>
+    </div>
     <div id="watchlistStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
     <div id="watchlistCards" class="watchlistGrid"></div>
   </div>
@@ -743,15 +746,18 @@ loadWatchlist();
 // ========================================================================
 // Dashboard: watchlist
 // ========================================================================
+let lastWatchlistMatches = [];
+
 async function loadWatchlist() {
   const status = document.getElementById('watchlistStatus');
   status.textContent = 'Loading...';
   const res = await fetch('/api/watchlist');
-  const matches = await res.json();
-  renderWatchlist(matches);
+  lastWatchlistMatches = await res.json();
+  renderWatchlist();
 }
 
-function renderWatchlist(matches) {
+function renderWatchlist() {
+  const matches = lastWatchlistMatches;
   const status = document.getElementById('watchlistStatus');
   const container = document.getElementById('watchlistCards');
   if (!matches.length) {
@@ -763,21 +769,24 @@ function renderWatchlist(matches) {
   for (const m of matches) {
     (byTicker[m.ticker] = byTicker[m.ticker] || []).push(m);
   }
-  const tickers = Object.keys(byTicker).sort((a, b) => {
+  const allTickers = Object.keys(byTicker).sort((a, b) => {
     const topA = Math.max(...byTicker[a].map(m => m.historical_return));
     const topB = Math.max(...byTicker[b].map(m => m.historical_return));
     return topB - topA;
   });
-  status.textContent = `${tickers.length} ticker${tickers.length === 1 ? '' : 's'} currently matching a historical pattern`;
+  const topN = parseInt(document.getElementById('watchlistTopN').value, 10) || 25;
+  const tickers = allTickers.slice(0, topN);
+  status.textContent = `Showing ${tickers.length} of ${allTickers.length} tickers currently matching a historical pattern`;
   container.innerHTML = tickers.map(t => {
     const group = byTicker[t].slice().sort((a, b) => b.historical_return - a.historical_return);
     const top = group[0];
     const extra = group.length - 1;
     const pct = (top.historical_return >= 0 ? '+' : '') + (top.historical_return * 100).toFixed(2) + '%';
+    const sourceNote = top.return_source === 'stock' ? 'stock history' : 'market-wide';
     return `<a class="watchlistCard" href="#stock-research?ticker=${t}" style="text-decoration:none;color:inherit;display:block">
       <div class="ticker">${t}</div>
       <div class="badge">${top.badge}</div>
-      <div class="return">${pct} historical return</div>
+      <div class="return">${pct} historical return <span style="color:#999;font-size:0.75em">(${sourceNote})</span></div>
       ${extra > 0 ? `<div class="extra">+${extra} more match${extra === 1 ? '' : 'es'}</div>` : ''}
     </a>`;
   }).join('');
@@ -788,17 +797,13 @@ function renderWatchlist(matches) {
 // ========================================================================
 let srTicker = null;
 let srView = 'all';
-let srMatchRows = [], srStockRows = [];
-let srMatchSort = { col: null, ascending: true };
-let srStockSort = { col: null, ascending: true };
-let srLoadedTabs = new Set();
-
-const SR_MATCH_COLUMNS = COLUMNS;   // identical column set to Market Research
+let srAllRows = [];
+let srMatchRows = [];
+let srMatchSort = { col: 'edge', ascending: false };
+let srStockSort = { col: 'edge', ascending: false };
 
 const SR_STOCK_COLUMNS = [
   { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
-  { id: 'live', label: 'Live?', html: true,
-    get: r => r.is_live ? '<span class="badge" style="background:#d9f3dc;color:#1a7a1a;padding:2px 8px;border-radius:10px;font-size:0.8em">Live now</span>' : '' },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
   { id: 'cases', label: 'Cases for this stock', numeric: true, get: r => srView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt },
   { id: 'ret5', label: '5-day Return', numeric: true, get: r => r[`mean_fwd_return_${srView}`], fmt: fmtPct },
@@ -809,6 +814,21 @@ const SR_STOCK_COLUMNS = [
     } },
   { id: 'hit', label: 'Hit Rate', numeric: true, get: r => r[`hit_rate_${srView}`], fmt: fmtPct0 },
   { id: 'vsall', label: 'vs. All-stock Average', numeric: true, get: r => r[`stock_effect_${srView}`], fmt: fmtPct },
+  { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
+    fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1] },
+  { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
+];
+
+const SR_MATCH_COLUMNS = [
+  { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
+  { id: 'confirm', label: 'Confirmation', html: true, get: r => r.confirmed
+      ? '<span class="badge" style="background:#d9f3dc;color:#1a7a1a;padding:2px 8px;border-radius:10px;font-size:0.8em">Stock-Confirmed</span>'
+      : '<span class="badge" style="background:#eee;color:#666;padding:2px 8px;border-radius:10px;font-size:0.8em">Market-Wide</span>' },
+  { id: 'cases', label: 'Cases', numeric: true, get: r => r.n, fmt: fmtInt },
+  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r.mean_fwd_return, fmt: fmtPct },
+  { id: 'edge', label: 'Edge', numeric: true, get: r => r.edge, fmt: fmtPct },
+  { id: 'hit', label: 'Hit Rate', numeric: true, get: r => r.hit_rate, fmt: fmtPct0 },
+  { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
   { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
     fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1] },
   { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
@@ -825,33 +845,24 @@ async function srSearch(ticker) {
   document.getElementById('srTickerInput').value = srTicker;
   srMatchSort = { col: 'edge', ascending: false };
   srStockSort = { col: 'edge', ascending: false };
-  srLoadedTabs = new Set();
-  const activeTab = document.querySelector('.tabBtn.active').dataset.tab;
-  await srLoadTab(activeTab);
-}
 
-async function srLoadTab(tab) {
-  if (!srTicker) return;
   const status = document.getElementById('srStatus');
   status.textContent = ' Loading...';
-  if (tab === 'matching') {
-    const res = await fetch(`/api/stock-matches?ticker=${encodeURIComponent(srTicker)}`);
-    srMatchRows = await res.json();
-    srRenderMatching();
-  } else {
-    const res = await fetch(`/api/stock-research?ticker=${encodeURIComponent(srTicker)}`);
-    srStockRows = await res.json();
-    srRenderStock();
-  }
-  srLoadedTabs.add(tab);
+  const [stockRes, matchRes] = await Promise.all([
+    fetch(`/api/stock-research?ticker=${encodeURIComponent(srTicker)}`),
+    fetch(`/api/stock-matching?ticker=${encodeURIComponent(srTicker)}`),
+  ]);
+  srAllRows = await stockRes.json();
+  srMatchRows = await matchRes.json();
   status.textContent = '';
+  srRenderMatching();
+  srRenderStock();
   srRenderBaseline();
 }
 
 function srRenderBaseline() {
   const box = document.getElementById('srBaselineDisplay');
-  const source = srMatchRows.length ? srMatchRows : srStockRows;
-  const row = source.find(r => r[`baseline_mean_${srView}`] != null);
+  const row = srAllRows.find(r => r[`baseline_mean_${srView}`] != null);
   box.textContent = row ? `Baseline (${srView === 'all' ? 'All Data' : 'Index-Only Data'}): ${fmtPct(row[`baseline_mean_${srView}`])}` : '';
 }
 
@@ -878,10 +889,10 @@ function srApplySort(rows, columns, sortState) {
   });
 }
 
-function srRenderGenericTable(containerId, rows, columns) {
+function srRenderGenericTable(containerId, rows, columns, sortState, onSort) {
   const container = document.getElementById(containerId);
   if (!rows.length) { container.innerHTML = '<p class="placeholder">No matching patterns.</p>'; return; }
-  let html = '<table><thead><tr>' + columns.map(c => `<th data-col="${c.id}" data-table="${containerId}" class="sortLabel">${c.label}</th>`).join('') + '</tr></thead><tbody>';
+  let html = '<table><thead><tr>' + columns.map(c => `<th data-col="${c.id}" class="sortLabel">${c.label}</th>`).join('') + '</tr></thead><tbody>';
   for (const row of rows) {
     html += '<tr>' + columns.map(c => `<td>${c.fmt ? c.fmt(c.get(row)) : c.get(row)}</td>`).join('') + '</tr>';
   }
@@ -890,24 +901,22 @@ function srRenderGenericTable(containerId, rows, columns) {
   container.querySelectorAll('th').forEach(th => {
     th.addEventListener('click', () => {
       const id = th.dataset.col;
-      const isMatching = containerId === 'srMatchTable';
-      const state = isMatching ? srMatchSort : srStockSort;
-      const newState = state.col === id ? { col: id, ascending: !state.ascending } : { col: id, ascending: true };
-      if (isMatching) { srMatchSort = newState; srRenderMatching(); } else { srStockSort = newState; srRenderStock(); }
+      onSort(sortState.col === id ? { col: id, ascending: !sortState.ascending } : { col: id, ascending: true });
     });
   });
 }
 
 function srRenderMatching() {
-  let rows = srApplyTextFilter(srMatchRows.filter(r => r[`effect_${srView}`] != null), 'srMatchFilter');
+  let rows = srMatchRows.filter(r => r.view === srView);
+  rows = srApplyTextFilter(rows, 'srMatchFilter');
   rows = srApplySort(rows, SR_MATCH_COLUMNS, srMatchSort);
-  srRenderGenericTable('srMatchTable', rows, SR_MATCH_COLUMNS);
+  srRenderGenericTable('srMatchTable', rows, SR_MATCH_COLUMNS, srMatchSort, s => { srMatchSort = s; srRenderMatching(); });
 }
 
 function srRenderStock() {
-  let rows = srApplyTextFilter(srStockRows, 'srStockFilter');
+  let rows = srApplyTextFilter(srAllRows, 'srStockFilter');
   rows = srApplySort(rows, SR_STOCK_COLUMNS, srStockSort);
-  srRenderGenericTable('srStockTable', rows, SR_STOCK_COLUMNS);
+  srRenderGenericTable('srStockTable', rows, SR_STOCK_COLUMNS, srStockSort, s => { srStockSort = s; srRenderStock(); });
 }
 
 document.getElementById('srSearchBtn').addEventListener('click', () => srSearch(document.getElementById('srTickerInput').value));
@@ -917,8 +926,8 @@ document.getElementById('srStockFilter').addEventListener('input', srRenderStock
 document.getElementById('srViewToggle').addEventListener('click', () => {
   srView = srView === 'all' ? 'flagged' : 'all';
   document.getElementById('srViewToggle').textContent = `View: ${srView === 'all' ? 'All Data' : 'Index-Only Data'}`;
-  if (srLoadedTabs.has('matching')) srRenderMatching();
-  if (srLoadedTabs.has('perstock')) srRenderStock();
+  srRenderMatching();
+  srRenderStock();
   srRenderBaseline();
 });
 document.querySelectorAll('.tabBtn').forEach(btn => {
@@ -927,10 +936,10 @@ document.querySelectorAll('.tabBtn').forEach(btn => {
     document.querySelectorAll('.tabPanel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
-    if (!srLoadedTabs.has(btn.dataset.tab)) srLoadTab(btn.dataset.tab);
   });
 });
 
+document.getElementById('watchlistTopN').addEventListener('input', renderWatchlist);
 document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
 document.getElementById('resetDefaultsBtn').addEventListener('click', resetDefaults);
 loadSettings();

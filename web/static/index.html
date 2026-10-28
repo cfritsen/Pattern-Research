@@ -58,11 +58,7 @@
   .saveMsg{margin-left:0.5em;font-size:0.9em}
   .saveMsg.ok{color:#1a7a1a}
   .saveMsg.err{color:#a32}
-  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ccc;
-    border-top-color:#4e8cff;border-radius:50%;animation:spin 0.8s linear infinite;
-    vertical-align:middle;margin-right:8px}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .successMsg{color:#1a7a1a;font-weight:bold} 
+
   .watchlistGrid{display:flex;flex-wrap:wrap;gap:0.75em;margin-top:0.5em}
   .watchlistCard{background:#fff;border:1px solid #ddd;border-radius:10px;
     padding:0.75em 1em;min-width:160px;box-shadow:0 1px 3px rgba(0,0,0,0.08)}
@@ -70,19 +66,26 @@
   .watchlistCard .badge{display:inline-block;background:#eef3fb;color:#2a5a9c;
     border-radius:12px;padding:1px 8px;font-size:0.75em;margin:4px 0}
   .watchlistCard .return{font-size:0.95em;margin-top:2px}
-  .watchlistCard .extra{color:#888;font-size:0.75em;margin-top:2px} 
+  .watchlistCard .extra{color:#888;font-size:0.75em;margin-top:2px}
+
   .infoTip{position:relative;display:inline-block;margin-left:4px;cursor:help;color:#888;
     font-size:0.75em;border:1px solid #999;border-radius:50%;width:13px;height:13px;
     text-align:center;line-height:12px;font-weight:normal}
   .infoTip .tipBox{display:none;position:absolute;top:140%;left:50%;transform:translateX(-50%);
-    background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:1em;
+    background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:1.15em;
     white-space:normal;width:200px;z-index:20;font-weight:normal;text-align:left}
   .infoTip:hover .tipBox{display:block}
   #baselineDisplay{font-size:0.85em;color:#555;margin:0.3em 0 0.6em}
+
   .tabBtn{padding:6px 14px;border:1px solid #ccc;background:#eee;cursor:pointer;border-radius:4px 4px 0 0;margin-right:2px}
   .tabBtn.active{background:#fff;border-bottom:1px solid #fff;font-weight:bold}
   .tabPanel{display:none;border:1px solid #ccc;border-top:none;padding:1em}
   .tabPanel.active{display:block}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ccc;
+    border-top-color:#4e8cff;border-radius:50%;animation:spin 0.8s linear infinite;
+    vertical-align:middle;margin-right:8px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .successMsg{color:#1a7a1a;font-weight:bold}
 </style>
 </head>
 <body>
@@ -92,12 +95,13 @@
   <a class="navItem active" data-page="dashboard">Dashboard</a>
   <a class="navItem" data-page="market-research">Market Research</a>
   <a class="navItem" data-page="stock-research">Stock Research</a>
+  <a class="navItem" data-page="pattern-stocks">Pattern Stocks</a>
   <a class="navItem" data-page="settings">Settings</a>
 </nav>
 
 <div id="content">
 
-    <div id="page-dashboard" class="page active">
+  <div id="page-dashboard" class="page active">
     <h1>Dashboard</h1>
     <div id="discoveryBanner" class="note"></div>
     <div class="controls">
@@ -105,6 +109,7 @@
       <button id="fullRediscoveryBtn" type="button">Full Rediscovery</button>
     </div>
     <div id="jobProgress"></div>
+
     <h2>Watchlist</h2>
     <div class="controls">
       <label>Show top <input id="watchlistTopN" type="number" value="10" min="1"></label>
@@ -128,11 +133,23 @@
     <h2>Strongest historical results</h2>
     <p>
       <input id="filterInput" type="text" placeholder="Filter (Conditions, Best Single Condition, Year Concentration)...">
-      <div id="baselineDisplay"></div>
       <span id="rowCount"></span>
     </p>
+    <div id="baselineDisplay"></div>
 
     <div id="table"></div>
+  </div>
+
+  <div id="page-settings" class="page">
+    <h1>Settings</h1>
+    <div class="note">Changes here affect the <i>next</i> time the pipeline runs for the selected index -- they don't change data already shown on Market Research until you reprocess.</div>
+    <div id="configErrorsBox"></div>
+    <form id="settingsForm" class="settingsForm"></form>
+    <div id="startOverridesBox"></div>
+    <div id="featureTogglesBox"></div>
+    <button id="saveSettingsBtn" type="button">Save Settings</button>
+    <button id="resetDefaultsBtn" type="button">Reset to Defaults</button>
+    <span id="saveMsg" class="saveMsg"></span>
   </div>
 
   <div id="page-stock-research" class="page">
@@ -159,35 +176,60 @@
     </div>
   </div>
 
-  <div id="page-settings" class="page">
-    <h1>Settings</h1>
-    <div class="note">Changes here affect the <i>next</i> time the pipeline runs for the selected index -- they don't change data already shown on Market Research until you reprocess.</div>
-    <div id="configErrorsBox"></div>
-    <form id="settingsForm" class="settingsForm"></form>
-    <div id="startOverridesBox"></div>
-    <div id="featureTogglesBox"></div>
-    <button id="saveSettingsBtn" type="button">Save Settings</button>
-    <button id="resetDefaultsBtn" type="button">Reset to Defaults</button>
-    <span id="saveMsg" class="saveMsg"></span>
+  <div id="page-pattern-stocks" class="page">
+    <h1>Pattern Stocks</h1>
+    <div id="psHeader"><p class="placeholder">Select a pattern from <a href="#market-research">Market Research</a> to see its matching stocks.</p></div>
+    <div class="controls">
+      <button id="psViewToggle" type="button">View: All Data</button>
+      <label>Sort by:
+        <select id="psSortField">
+          <option value="edge">Edge</option>
+          <option value="ret5">5-day Return</option>
+          <option value="hit">Hit Rate</option>
+          <option value="cases">Cases</option>
+          <option value="ticker">Ticker</option>
+        </select>
+      </label>
+      <button id="psSortDir" type="button">&#9660; Descending</button>
+      <span id="psStatus"></span>
+    </div>
+    <div id="psCount" style="font-size:0.85em;color:#666;margin-bottom:0.3em"></div>
+    <div id="psCards" class="watchlistGrid"></div>
   </div>
 
 </div>
 
 <script>
-let lastRenderedMode = null;
-let previousJobStatus = null;
-let successVisible = false;
-// ---- Sidebar navigation ----
+// ========================================================================
+// Sidebar navigation
+// ========================================================================
 function showPage(pageId) {
   document.querySelectorAll('.navItem').forEach(i => i.classList.toggle('active', i.dataset.page === pageId));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === `page-${pageId}`));
 }
+
 document.querySelectorAll('.navItem').forEach(item => {
   item.addEventListener('click', () => {
     if (item.dataset.page !== 'dashboard') successVisible = false;
     window.location.hash = item.dataset.page;
   });
 });
+
+function parseTickerFromHash() {
+  const m = window.location.hash.match(/ticker=([A-Za-z.\-]+)/);
+  return m ? m[1].toUpperCase() : null;
+}
+
+function parsePatternParamsFromHash() {
+  const hash = window.location.hash;
+  const pidMatch = hash.match(/pattern_id=(\d+)/);
+  const viewMatch = hash.match(/view=(all|flagged)/);
+  return {
+    patternId: pidMatch ? parseInt(pidMatch[1], 10) : null,
+    view: viewMatch ? viewMatch[1] : 'all',
+  };
+}
+
 function handleHashChange() {
   const page = (window.location.hash.slice(1) || 'dashboard').split('?')[0];
   showPage(page);
@@ -195,9 +237,11 @@ function handleHashChange() {
     const t = parseTickerFromHash();
     if (t && t !== srTicker) srSearch(t);
   }
+  if (page === 'pattern-stocks') {
+    const { patternId, view } = parsePatternParamsFromHash();
+    if (patternId !== null) psLoad(patternId, view);
+  }
 }
-window.addEventListener('hashchange', handleHashChange);
-handleHashChange();
 
 // ========================================================================
 // Market Research page
@@ -240,17 +284,6 @@ function overlapCategory(r) {
 }
 const OVERLAP_OPTS = [['above', 'Correlated'], ['below', 'Anti-correlated'], ['na', 'N/A']];
 
-function directionCategory(effect) {
-  if (effect === null || effect === undefined) return 'na';
-  return effect > 0 ? 'bullish' : 'bearish';
-}
-const DIRECTION_OPTS = [['bullish', 'Bullish'], ['bearish', 'Bearish'], ['na', 'N/A']];
-
-function confirmCategory(ok) {
-  if (ok === null || ok === undefined) return 'na';
-  return ok ? 'yes' : 'no';
-}
-
 const COLUMNS = [
   { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0, filter: 'range' },
@@ -266,6 +299,7 @@ const COLUMNS = [
     category: true, get: r => overlapCategory(r.overlap_ratio),
     fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1], filter: 'category', opts: OVERLAP_OPTS },
   { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
+  { id: 'stocksLink', label: 'Stocks', html: true, get: r => `<a href="#pattern-stocks?pattern_id=${r.pattern_id}&view=${currentView}">View stocks \u2192</a>` },
 ];
 
 function initFilters() {
@@ -299,6 +333,11 @@ function rowVisibleInView(row) {
   const effect = getViewField(row, 'effect');
   if (effect === null || effect === undefined) return false;
   return confirmCategory(getViewField(row, 'direction_ok')) !== 'no';
+}
+
+function confirmCategory(ok) {
+  if (ok === null || ok === undefined) return 'na';
+  return ok ? 'yes' : 'no';
 }
 
 function applyTextFilter(rows) {
@@ -347,6 +386,14 @@ function applySort(rows) {
   });
 }
 
+function renderBaseline() {
+  const box = document.getElementById('baselineDisplay');
+  const row = rawRows.find(r => r[`baseline_mean_${currentView}`] != null);
+  if (!row) { box.textContent = ''; return; }
+  const label = currentView === 'all' ? 'All Data' : 'Index-Only Data';
+  box.textContent = `Baseline (${label}): ${fmtPct(row[`baseline_mean_${currentView}`])}`;
+}
+
 function render() {
   let rows = rawRows.filter(rowVisibleInView);
   rows = applyTextFilter(rows);
@@ -357,14 +404,6 @@ function render() {
   document.getElementById('rowCount').textContent = `${shown.length} shown of ${rows.length} matching (of ${rawRows.length} total)`;
   renderBaseline();
   renderTable(shown);
-}
-
-function renderBaseline() {
-  const box = document.getElementById('baselineDisplay');
-  const row = rawRows.find(r => r[`baseline_mean_${currentView}`] != null);
-  if (!row) { box.textContent = ''; return; }
-  const label = currentView === 'all' ? 'All Data' : 'Index-Only Data';
-  box.textContent = `Baseline (${label}): ${fmtPct(row[`baseline_mean_${currentView}`])}`;
 }
 
 function closePopovers() {
@@ -471,23 +510,21 @@ document.getElementById('viewToggle').addEventListener('click', () => {
   document.getElementById('viewToggle').textContent = `View: ${currentView === 'all' ? 'All Data' : 'Index-Only Data'}`;
   render();
 });
-loadIndices().then(loadPatterns);
 
 // ========================================================================
 // Settings page
 // ========================================================================
 let settingsFields = [];
 let settingsValues = {};
+let allFeatures = [];
 
-// Mirrors config.yaml's shipped defaults. "Reset to Defaults" only updates
-// the form -- nothing is saved until "Save Settings" is clicked.
 const DEFAULT_CONFIG = {
-  index: "sp500", data_dir: "data", report_dir: "reports",
-  start_date: "1996-01-01", use_stooq_fallback: true,
+  index: "sp500", start_date: "1996-01-01", use_stooq_fallback: true,
   jump_threshold: 0.25, pause_seconds: 0.5,
   start_overrides: { JCI: "2007-07-02" },
   horizon: 5, move_atr: 1.0, discovery_frac: 0.70, cost: 0.001,
-  corr_prune_threshold: 0.7, test_all_buckets: false,
+  corr_prune_threshold: 0.7, test_all_buckets: false, multithreading: false,
+  disabled_features: [],
 };
 
 async function loadSettings() {
@@ -515,12 +552,7 @@ function renderSettingsForm() {
   form.innerHTML = settingsFields.map(f => {
     const val = settingsValues[f.key];
     let input;
-    if (f.type === 'folder') {
-      input = `<div>
-        <code>${val ?? ''}</code>
-        <button type="button" class="openFolderBtn" data-which="${f.key}">Open Folder</button>
-      </div>`;
-    } else if (f.type === 'boolean') {
+    if (f.type === 'boolean') {
       input = `<input type="checkbox" data-key="${f.key}" ${val ? 'checked' : ''}>`;
     } else if (f.type === 'select') {
       input = `<select data-key="${f.key}">${f.options.map(o =>
@@ -537,20 +569,6 @@ function renderSettingsForm() {
       <div class="help">${f.help}</div>
     </div>`;
   }).join('');
-
-  form.querySelectorAll('.openFolderBtn').forEach(btn => {
-    btn.addEventListener('click', () => openFolder(btn.dataset.which));
-  });
-}
-
-async function openFolder(which) {
-  const msg = document.getElementById('saveMsg');
-  const res = await fetch(`/api/open-folder?which=${which}`);
-  const data = await res.json();
-  if (!res.ok) {
-    msg.textContent = data.error;
-    msg.className = 'saveMsg err';
-  }
 }
 
 function renderStartOverrides() {
@@ -571,7 +589,13 @@ function renderStartOverrides() {
   });
 }
 
-let allFeatures = [];
+function overrideRowHtml(ticker, date) {
+  return `<div class="overrideRow">
+    <input type="text" class="overrideTicker" placeholder="TICKER" value="${ticker}">
+    <input type="text" class="overrideDate" placeholder="YYYY-MM-DD" value="${date}">
+    <button type="button" class="overrideRemove">Remove</button>
+  </div>`;
+}
 
 function renderFeatureToggles() {
   const box = document.getElementById('featureTogglesBox');
@@ -584,19 +608,8 @@ function renderFeatureToggles() {
   </div>`;
 }
 
-function overrideRowHtml(ticker, date) {
-  return `<div class="overrideRow">
-    <input type="text" class="overrideTicker" placeholder="TICKER" value="${ticker}">
-    <input type="text" class="overrideDate" placeholder="YYYY-MM-DD" value="${date}">
-    <button type="button" class="overrideRemove">Remove</button>
-  </div>`;
-}
-
 function collectFormValues() {
   const cfg = {};
-  // data_dir/report_dir have no form fields right now (hidden pending the
-  // future run/save/revisit/export reports feature) but are still required
-  // by validate_config, so carry their current values through unchanged.
   cfg.data_dir = settingsValues.data_dir;
   cfg.report_dir = settingsValues.report_dir;
   settingsFields.forEach(f => {
@@ -625,6 +638,7 @@ function resetDefaults() {
   settingsValues = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
   renderSettingsForm();
   renderStartOverrides();
+  renderFeatureToggles();
   const msg = document.getElementById('saveMsg');
   msg.textContent = 'Reset to defaults -- not yet saved.';
   msg.className = 'saveMsg';
@@ -652,9 +666,15 @@ async function saveSettings() {
   }
 }
 
+document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+document.getElementById('resetDefaultsBtn').addEventListener('click', resetDefaults);
+
 // ========================================================================
 // Dashboard: pipeline jobs
 // ========================================================================
+let lastRenderedMode = null;
+let previousJobStatus = null;
+let successVisible = false;
 
 const JOB_LABELS = { update_data: 'Update Price Data', full_rediscovery: 'Full Rediscovery' };
 
@@ -684,6 +704,7 @@ function renderJobProgress(status) {
     successVisible = true;
     loadPatterns();
     loadWatchlist();
+    if (psPatternId !== null) psLoad(psPatternId, psView);
   }
   previousJobStatus = status.status;
 
@@ -740,8 +761,6 @@ async function startJob(jobName) {
 document.getElementById('updateDataBtn').addEventListener('click', () => startJob('update_data'));
 document.getElementById('fullRediscoveryBtn').addEventListener('click', () => startJob('full_rediscovery'));
 setInterval(pollJobStatus, 1000);
-pollJobStatus();
-loadWatchlist();
 
 // ========================================================================
 // Dashboard: watchlist
@@ -774,7 +793,7 @@ function renderWatchlist() {
     const topB = Math.max(...byTicker[b].map(m => m.historical_return));
     return topB - topA;
   });
-  const topN = parseInt(document.getElementById('watchlistTopN').value, 10) || 25;
+  const topN = parseInt(document.getElementById('watchlistTopN').value, 10) || 10;
   const tickers = allTickers.slice(0, topN);
   status.textContent = `Showing ${tickers.length} of ${allTickers.length} tickers currently matching a historical pattern`;
   container.innerHTML = tickers.map(t => {
@@ -792,6 +811,8 @@ function renderWatchlist() {
   }).join('');
 }
 
+document.getElementById('watchlistTopN').addEventListener('input', renderWatchlist);
+
 // ========================================================================
 // Stock Research page
 // ========================================================================
@@ -801,23 +822,6 @@ let srAllRows = [];
 let srMatchRows = [];
 let srMatchSort = { col: 'edge', ascending: false };
 let srStockSort = { col: 'edge', ascending: false };
-
-const SR_STOCK_COLUMNS = [
-  { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
-  { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
-  { id: 'cases', label: 'Cases for this stock', numeric: true, get: r => srView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt },
-  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r[`mean_fwd_return_${srView}`], fmt: fmtPct },
-  { id: 'edge', label: 'Edge', numeric: true, get: r => r[`edge_${srView}`], fmt: fmtPct },
-  { id: 'best', label: 'vs. Best Single Condition', html: true, get: r => {
-      const o = r[`best_single_${srView}`];
-      return o ? `${fmtPct(o.effect)} (${o.feature} bucket ${o.bucket})` : 'N/A';
-    } },
-  { id: 'hit', label: 'Hit Rate', numeric: true, get: r => r[`hit_rate_${srView}`], fmt: fmtPct0 },
-  { id: 'vsall', label: 'vs. All-stock Average', numeric: true, get: r => r[`stock_effect_${srView}`], fmt: fmtPct },
-  { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
-    fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1] },
-  { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
-];
 
 const SR_MATCH_COLUMNS = [
   { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
@@ -832,12 +836,28 @@ const SR_MATCH_COLUMNS = [
   { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
     fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1] },
   { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
+  { id: 'stocksLink', label: 'Stocks', html: true, get: r => `<a href="#pattern-stocks?pattern_id=${r.pattern_id}&view=${r.view}">View stocks \u2192</a>` },
 ];
 
-function parseTickerFromHash() {
-  const m = window.location.hash.match(/ticker=([A-Za-z.\-]+)/);
-  return m ? m[1].toUpperCase() : null;
-}
+const SR_STOCK_COLUMNS = [
+  { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
+  { id: 'live', label: 'Live?', html: true,
+    get: r => r.is_live ? '<span class="badge" style="background:#d9f3dc;color:#1a7a1a;padding:2px 8px;border-radius:10px;font-size:0.8em">Live now</span>' : '' },
+  { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
+  { id: 'cases', label: 'Cases for this stock', numeric: true, get: r => srView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt },
+  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r[`mean_fwd_return_${srView}`], fmt: fmtPct },
+  { id: 'edge', label: 'Edge', numeric: true, get: r => r[`edge_${srView}`], fmt: fmtPct },
+  { id: 'best', label: 'vs. Best Single Condition', html: true, get: r => {
+      const o = r[`best_single_${srView}`];
+      return o ? `${fmtPct(o.effect)} (${o.feature} bucket ${o.bucket})` : 'N/A';
+    } },
+  { id: 'hit', label: 'Hit Rate', numeric: true, get: r => r[`hit_rate_${srView}`], fmt: fmtPct0 },
+  { id: 'vsall', label: 'vs. All-stock Average', numeric: true, get: r => r[`stock_effect_${srView}`], fmt: fmtPct },
+  { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
+    fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1] },
+  { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
+  { id: 'stocksLink', label: 'Stocks', html: true, get: r => `<a href="#pattern-stocks?pattern_id=${r.pattern_id}&view=${srView}">View stocks \u2192</a>` },
+];
 
 async function srSearch(ticker) {
   srTicker = ticker.toUpperCase().trim();
@@ -862,7 +882,8 @@ async function srSearch(ticker) {
 
 function srRenderBaseline() {
   const box = document.getElementById('srBaselineDisplay');
-  const row = srAllRows.find(r => r[`baseline_mean_${srView}`] != null);
+  const source = srAllRows.length ? srAllRows : srMatchRows;
+  const row = source.find(r => r[`baseline_mean_${srView}`] != null);
   box.textContent = row ? `Baseline (${srView === 'all' ? 'All Data' : 'Index-Only Data'}): ${fmtPct(row[`baseline_mean_${srView}`])}` : '';
 }
 
@@ -939,10 +960,121 @@ document.querySelectorAll('.tabBtn').forEach(btn => {
   });
 });
 
-document.getElementById('watchlistTopN').addEventListener('input', renderWatchlist);
-document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
-document.getElementById('resetDefaultsBtn').addEventListener('click', resetDefaults);
+// ========================================================================
+// Pattern Stocks page
+// ========================================================================
+let psPatternId = null;
+let psView = 'all';
+let psRows = [];
+let psSort = { col: 'edge', ascending: false };
+
+const PS_COLUMNS = [
+  { id: 'ticker', get: r => r.ticker },
+  { id: 'cases', get: r => r.n },
+  { id: 'ret5', get: r => r.mean_fwd_return },
+  { id: 'edge', get: r => r.edge },
+  { id: 'hit', get: r => r.hit_rate },
+];
+
+function psApplySort(rows) {
+  const column = PS_COLUMNS.find(c => c.id === psSort.col);
+  const dir = psSort.ascending ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const av = column.get(a), bv = column.get(b);
+    if (psSort.col === 'ticker') return String(av).localeCompare(String(bv)) * dir;
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+    return (av - bv) * dir;
+  });
+}
+
+async function psLoad(patternId, view) {
+  psPatternId = patternId;
+  psView = view || 'all';
+  psSort = { col: 'edge', ascending: false };
+  document.getElementById('psSortField').value = 'edge';
+  document.getElementById('psSortDir').textContent = '\u25BC Descending';
+  const status = document.getElementById('psStatus');
+  status.textContent = 'Loading...';
+
+  let data;
+  try {
+    const res = await fetch(`/api/pattern-matches?pattern_id=${patternId}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Server error (${res.status}): ${text.slice(0, 300)}`);
+    }
+    data = await res.json();
+  } catch (err) {
+    status.textContent = '';
+    document.getElementById('psHeader').innerHTML = `<p class="placeholder">Failed to load: ${err.message}</p>`;
+    document.getElementById('psCards').innerHTML = '';
+    return;
+  }
+
+  if (data.error) {
+    status.textContent = '';
+    document.getElementById('psHeader').innerHTML = `<p class="placeholder">${data.error}</p>`;
+    document.getElementById('psCards').innerHTML = '';
+    return;
+  }
+
+  psRows = data.matches;
+  status.textContent = '';
+  document.getElementById('psHeader').innerHTML =
+    `<div>${data.pattern.conditions_html}</div>
+     <div style="font-size:0.85em;color:#555;margin-top:0.3em">
+       Baseline (All Data): ${fmtPct(data.pattern.baseline_mean_all)} &nbsp;|&nbsp;
+       Baseline (Index-Only): ${fmtPct(data.pattern.baseline_mean_flagged)}
+     </div>`;
+  document.getElementById('psViewToggle').textContent = `View: ${psView === 'all' ? 'All Data' : 'Index-Only Data'}`;
+  psRender();
+}
+
+function psRender() {
+  let rows = psRows.filter(r => r.view === psView);
+  rows = psApplySort(rows);
+  document.getElementById('psCount').textContent = `${rows.length} matching stocks`;
+  const container = document.getElementById('psCards');
+  if (!rows.length) { container.innerHTML = '<p class="placeholder">No matching stocks.</p>'; return; }
+  container.innerHTML = rows.map(r => {
+    const confirmBadge = r.confirmed
+      ? '<span class="badge" style="background:#d9f3dc;color:#1a7a1a;padding:2px 8px;border-radius:10px;font-size:0.75em">Stock-Confirmed</span>'
+      : '<span class="badge" style="background:#eee;color:#666;padding:2px 8px;border-radius:10px;font-size:0.75em">Market-Wide</span>';
+    return `<a class="watchlistCard" href="#stock-research?ticker=${r.ticker}" style="text-decoration:none;color:inherit;display:block">
+      <div class="ticker">${r.ticker}</div>
+      <div style="margin:4px 0">${confirmBadge}</div>
+      <div class="return">${fmtPct(r.mean_fwd_return)} 5-day return</div>
+      <div style="font-size:0.85em;color:#555">Edge: ${fmtPct(r.edge)}</div>
+      <div style="font-size:0.85em;color:#555">Hit Rate: ${fmtPct0(r.hit_rate)}</div>
+      <div style="font-size:0.85em;color:#555">Cases: ${fmtInt(r.n)}</div>
+    </a>`;
+  }).join('');
+}
+
+document.getElementById('psViewToggle').addEventListener('click', () => {
+  psView = psView === 'all' ? 'flagged' : 'all';
+  document.getElementById('psViewToggle').textContent = `View: ${psView === 'all' ? 'All Data' : 'Index-Only Data'}`;
+  psRender();
+});
+document.getElementById('psSortField').addEventListener('change', e => {
+  psSort.col = e.target.value;
+  psRender();
+});
+document.getElementById('psSortDir').addEventListener('click', () => {
+  psSort.ascending = !psSort.ascending;
+  document.getElementById('psSortDir').textContent = psSort.ascending ? '\u25B2 Ascending' : '\u25BC Descending';
+  psRender();
+});
+
+// ========================================================================
+// Initial load
+// ========================================================================
+window.addEventListener('hashchange', handleHashChange);
+handleHashChange();
+loadIndices().then(loadPatterns);
 loadSettings();
+loadWatchlist();
 </script>
 </body>
 </html>

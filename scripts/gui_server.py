@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import pandas as pd
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 from patternlab.config import (
@@ -9,10 +10,10 @@ from patternlab.config import (
 )
 from patternlab.db import connect
 from patternlab.reports import build_pattern_context, pattern_view, to_api_rows, stock_view, stock_to_api_rows, passes_direction_filter
-from patternlab.humanize import badge_text, FEATURE_INFO, ALL_FEATURES
+from patternlab.humanize import badge_text, FEATURE_INFO, ALL_FEATURES, conditions_html
 from patternlab.universe_fetch import get_universe, get_index_proxy, PROVIDERS
 from patternlab.jobs import start_job, get_status, discovery_status, STAGES
-from patternlab.watchlist import compute_watchlist, load_edges, compute_matching_table, matching_table_to_api_rows
+from patternlab.watchlist import compute_watchlist, load_edges, compute_matching_table, matching_table_to_api_rows, compute_pattern_matches
 
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "web" / "static"
@@ -219,6 +220,35 @@ def api_stock_matching():
     edges_by_feature = load_edges(conn)
     rows = compute_matching_table(cfg, uni, conn, ticker)
     return jsonify(matching_table_to_api_rows(rows, edges_by_feature))
+
+@app.get("/api/pattern-matches")
+def api_pattern_matches():
+    cfg0 = read_raw_config()
+    index = request.args.get("index", cfg0.get("index", "sp500"))
+    try:
+        pattern_id = int(request.args.get("pattern_id", ""))
+    except ValueError:
+        return jsonify({"error": "pattern_id must be an integer"}), 400
+    if index not in PROVIDERS:
+        return jsonify({"error": f"Unknown index {index!r}"}), 400
+
+    cfg = _cfg_for(index)
+    uni = get_universe(cfg)
+    conn = connect(cfg)
+    edges_by_feature = load_edges(conn)
+    context = build_pattern_context(conn)
+    if context.empty or pattern_id not in context.index:
+        return jsonify({"error": "Pattern not found"}), 404
+    prow = context.loc[pattern_id]
+
+    meta = {
+        "pattern_id": pattern_id,
+        "conditions_html": conditions_html(prow["description"], edges_by_feature),
+        "baseline_mean_all": None if pd.isna(prow["baseline_mean_all"]) else float(prow["baseline_mean_all"]),
+        "baseline_mean_flagged": None if pd.isna(prow["baseline_mean_flagged"]) else float(prow["baseline_mean_flagged"]),
+    }
+    matches = compute_pattern_matches(cfg, uni, conn, pattern_id)
+    return jsonify({"pattern": meta, "matches": matches})
 
 if __name__ == "__main__":
     # threaded=True so status polls are served while a job's background

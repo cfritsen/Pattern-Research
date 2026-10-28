@@ -197,3 +197,46 @@ def matching_table_to_api_rows(rows: list[dict], edges_by_feature: dict) -> list
         entry["conditions_html"] = conditions_html(r["description"], edges_by_feature)
         out.append(entry)
     return out
+
+def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int) -> list[dict]:
+    """Every ticker currently matching ONE fixed pattern -- the inverse
+    pivot of compute_matching_table (which fixes ticker, varies pattern).
+    Same stock-confirmed/market-wide fallback logic and confirmation flag."""
+    feat_dir = Path(cfg["data_dir"]) / "features"
+
+    context = build_pattern_context(conn)
+    if context.empty or pattern_id not in context.index:
+        return []
+    prow = context.loc[pattern_id]
+    if not passes_direction_filter(prow):
+        return []
+
+    conditions = json.loads(prow["conditions_json"])
+    edges_by_feature = load_edges(conn)
+    stock_stats = load_stock_stats(conn, {pattern_id})
+
+    rows = []
+    for ticker in uni["data_ticker"]:
+        frow = latest_feature_row(feat_dir, ticker)
+        if frow is None:
+            continue
+        if not all(current_bucket(c["feature"], frow, edges_by_feature) == c["bucket"]
+                  for c in conditions):
+            continue
+        for view in ("all", "flagged"):
+            if pd.isna(prow[f"effect_{view}"]):
+                continue
+            stats = stock_stats.get((ticker, pattern_id, view))
+            confirmed = stats is not None
+            market_n = prow["n_all"] if view == "all" else prow["n_flagged"]
+            rows.append({
+                "ticker": ticker,
+                "view": view,
+                "confirmed": confirmed,
+                "n": stats["n"] if confirmed else (None if pd.isna(market_n) else int(market_n)),
+                "mean_fwd_return": stats["mean_fwd_return"] if confirmed else float(prow[f"mean_fwd_return_{view}"]),
+                "edge": stats["effect"] if confirmed else float(prow[f"effect_{view}"]),
+                "hit_rate": stats["hit_rate"] if confirmed else (
+                    None if pd.isna(prow[f"hit_rate_{view}"]) else float(prow[f"hit_rate_{view}"])),
+            })
+    return rows

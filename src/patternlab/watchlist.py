@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 from patternlab.buckets import CATEGORICAL
 from patternlab.reports import build_pattern_context, passes_direction_filter
+from patternlab.humanize import badge_text
 
 
 def apply_bucket_scalar(value, edges: list[float]) -> int | None:
@@ -240,3 +241,48 @@ def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int)
                     None if pd.isna(prow[f"hit_rate_{view}"]) else float(prow[f"hit_rate_{view}"])),
             })
     return rows
+
+def compute_month_patterns_context(conn, month: int) -> pd.DataFrame:
+    """Pattern rows (same shape as build_pattern_context) whose conditions
+    include month == the given bucket (1-12). Powers Date Insights'
+    Patterns tab, which reuses Market Research's row format as-is."""
+    context = build_pattern_context(conn)
+    if context.empty:
+        return context
+    def has_month(conds_json):
+        conds = json.loads(conds_json)
+        return any(c["feature"] == "month" and c["bucket"] == month for c in conds)
+    kept = context[context["conditions_json"].apply(has_month)]
+    if kept.empty:
+        return kept
+    return kept[kept.apply(passes_direction_filter, axis=1)]
+
+
+def compute_month_stock_matches(conn, month: int) -> list[dict]:
+    """Flat (ticker, pattern_id, view) rows for Date Insights' Stocks tab.
+    Purely historical -- a stock appears here only if it has enough of its
+    own historical occurrences (per load_stock_stats' reliability floor) of
+    a pattern whose conditions include this month. No live or current data
+    is read; this reflects what already happened, not today's values."""
+    context = compute_month_patterns_context(conn, month)
+    if context.empty:
+        return []
+    pattern_ids = set(int(i) for i in context.index)
+    stock_stats = load_stock_stats(conn, pattern_ids)
+
+    matches = []
+    for (ticker, pattern_id, view), stats in stock_stats.items():
+        prow = context.loc[pattern_id]
+        conditions = json.loads(prow["conditions_json"])
+        other_conditions = [c for c in conditions if c["feature"] != "month"]
+        badge = badge_text(other_conditions) if other_conditions else badge_text(conditions)
+        matches.append({
+            "ticker": ticker,
+            "pattern_id": pattern_id,
+            "view": view,
+            "badge": badge,
+            "n": stats["n"],
+            "historical_return": stats["mean_fwd_return"],
+            "hit_rate": stats["hit_rate"],
+        })
+    return matches

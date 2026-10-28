@@ -86,6 +86,8 @@
     vertical-align:middle;margin-right:8px}
   @keyframes spin{to{transform:rotate(360deg)}}
   .successMsg{color:#1a7a1a;font-weight:bold}
+  .monthBtn{padding:6px 10px;border:1px solid #ccc;background:#fff;cursor:pointer;border-radius:4px;margin:2px}
+  .monthBtn.active{background:#4e8cff;color:#fff;border-color:#4e8cff}
 </style>
 </head>
 <body>
@@ -96,6 +98,7 @@
   <a class="navItem" data-page="market-research">Market Research</a>
   <a class="navItem" data-page="stock-research">Stock Research</a>
   <a class="navItem" data-page="pattern-stocks">Pattern Stocks</a>
+  <a class="navItem" data-page="date-insights">Date Insights</a>
   <a class="navItem" data-page="settings">Settings</a>
 </nav>
 
@@ -195,6 +198,28 @@
     </div>
     <div id="psCount" style="font-size:0.85em;color:#666;margin-bottom:0.3em"></div>
     <div id="psCards" class="watchlistGrid"></div>
+  </div>
+
+  <div id="page-date-insights" class="page">
+    <h1>Date Insights</h1>
+    <div class="note"><b>This report shows historical statistical patterns in price data. It is descriptive research, not investment advice, and not a recommendation to buy or sell any security.</b></div>
+    <div id="diMonthButtons" class="controls"></div>
+
+    <div>
+      <button class="tabBtn active" data-ditab="patterns">Patterns</button>
+      <button class="tabBtn" data-ditab="stocks">Stocks</button>
+    </div>
+    <div id="ditab-patterns" class="tabPanel active">
+      <div class="controls">
+        <button id="diViewToggle" type="button">View: All Data</button>
+        <span id="diStatus"></span>
+      </div>
+      <div id="diPatternTable"></div>
+    </div>
+    <div id="ditab-stocks" class="tabPanel">
+      <div id="diStockStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
+      <div id="diStockCards" class="watchlistGrid"></div>
+    </div>
   </div>
 
 </div>
@@ -951,9 +976,9 @@ document.getElementById('srViewToggle').addEventListener('click', () => {
   srRenderStock();
   srRenderBaseline();
 });
-document.querySelectorAll('.tabBtn').forEach(btn => {
+document.querySelectorAll('.tabBtn[data-tab]').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tabBtn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tabBtn[data-tab]').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tabPanel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
@@ -1068,6 +1093,115 @@ document.getElementById('psSortDir').addEventListener('click', () => {
 });
 
 // ========================================================================
+// Date Insights page
+// ========================================================================
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+let diMonth = new Date().getMonth() + 1;
+let diView = 'all';
+let diPatternRows = [];
+let diStockMatches = [];
+let diLoadedTabs = new Set();
+let diPatternSort = { col: 'edge', ascending: false };
+
+function getDiViewField(row, field) { return row[`${field}_${diView}`]; }
+
+const DI_PATTERN_COLUMNS = [
+  { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
+  { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
+  { id: 'cases', label: 'Cases Found', numeric: true, get: r => diView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt },
+  { id: 'ret5', label: '5-day Return', numeric: true, get: r => getDiViewField(r, 'mean_fwd_return'), fmt: fmtPct },
+  { id: 'edge', label: 'Edge', numeric: true, get: r => getDiViewField(r, 'effect'), fmt: fmtPct },
+  { id: 'fdr', label: 'FDR', numeric: true, get: r => getDiViewField(r, 'q_value'), fmt: fmtPct0 },
+  { id: 'stocks', label: 'Stocks Agreed', numeric: true, get: r => getDiViewField(r, 'breadth_stocks'), fmt: fmtPct0 },
+  { id: 'years', label: 'Years Agreed', numeric: true, get: r => getDiViewField(r, 'breadth_years'), fmt: fmtPct0 },
+  { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
+  { id: 'stocksLink', label: 'Stocks', html: true, get: r => `<a href="#pattern-stocks?pattern_id=${r.pattern_id}&view=${diView}">View stocks \u2192</a>` },
+];
+
+function renderMonthButtons() {
+  const box = document.getElementById('diMonthButtons');
+  box.innerHTML = MONTH_NAMES.map((name, i) =>
+    `<button class="monthBtn ${diMonth === i + 1 ? 'active' : ''}" data-month="${i + 1}">${name}</button>`).join('');
+  box.querySelectorAll('.monthBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      diMonth = parseInt(btn.dataset.month, 10);
+      diLoadedTabs = new Set();
+      renderMonthButtons();
+      diLoadTab(document.querySelector('.tabBtn.active[data-ditab]')?.dataset.ditab || 'patterns');
+    });
+  });
+}
+
+async function diLoadTab(tab) {
+  const status = tab === 'patterns' ? document.getElementById('diStatus') : document.getElementById('diStockStatus');
+  status.textContent = 'Loading...';
+  if (tab === 'patterns') {
+    const res = await fetch(`/api/date-insights/patterns?month=${diMonth}`);
+    diPatternRows = await res.json();
+    diRenderPatterns();
+  } else {
+    const res = await fetch(`/api/date-insights/stocks?month=${diMonth}`);
+    diStockMatches = await res.json();
+    diRenderStocks();
+  }
+  diLoadedTabs.add(tab);
+  status.textContent = '';
+}
+
+function diRenderPatterns() {
+  let rows = diPatternRows.filter(r => getDiViewField(r, 'effect') != null);
+  rows = srApplySort(rows, DI_PATTERN_COLUMNS, diPatternSort);
+  srRenderGenericTable('diPatternTable', rows, DI_PATTERN_COLUMNS, diPatternSort, s => { diPatternSort = s; diRenderPatterns(); });
+}
+
+function diRenderStocks() {
+  const container = document.getElementById('diStockCards');
+  const status = document.getElementById('diStockStatus');
+  if (!diStockMatches.length) {
+    status.textContent = '';
+    container.innerHTML = '<p class="placeholder">No stocks have enough historical occurrences of a pattern for this month.</p>';
+    return;
+  }
+  const byTicker = {};
+  for (const m of diStockMatches) {
+    (byTicker[m.ticker] = byTicker[m.ticker] || []).push(m);
+  }
+  const tickers = Object.keys(byTicker).sort((a, b) => {
+    const topA = Math.max(...byTicker[a].map(m => m.historical_return));
+    const topB = Math.max(...byTicker[b].map(m => m.historical_return));
+    return topB - topA;
+  });
+  status.textContent = `${tickers.length} ticker${tickers.length === 1 ? '' : 's'} with a historically validated ${MONTH_NAMES[diMonth - 1]} pattern`;
+  container.innerHTML = tickers.map(t => {
+    const group = byTicker[t].slice().sort((a, b) => b.historical_return - a.historical_return);
+    const top = group[0];
+    const extra = group.length - 1;
+    const pct = (top.historical_return >= 0 ? '+' : '') + (top.historical_return * 100).toFixed(2) + '%';
+    return `<a class="watchlistCard" href="#stock-research?ticker=${t}" style="text-decoration:none;color:inherit;display:block">
+      <div class="ticker">${t}</div>
+      <div class="badge">${top.badge}</div>
+      <div class="return">${pct} historical return</div>
+      ${extra > 0 ? `<div class="extra">+${extra} more match${extra === 1 ? '' : 'es'}</div>` : ''}
+    </a>`;
+  }).join('');
+}
+
+document.querySelectorAll('.tabBtn[data-ditab]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabBtn[data-ditab]').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#page-date-insights .tabPanel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`ditab-${btn.dataset.ditab}`).classList.add('active');
+    if (!diLoadedTabs.has(btn.dataset.ditab)) diLoadTab(btn.dataset.ditab);
+  });
+});
+document.getElementById('diViewToggle').addEventListener('click', () => {
+  diView = diView === 'all' ? 'flagged' : 'all';
+  document.getElementById('diViewToggle').textContent = `View: ${diView === 'all' ? 'All Data' : 'Index-Only Data'}`;
+  diRenderPatterns();
+});
+
+// ========================================================================
 // Initial load
 // ========================================================================
 window.addEventListener('hashchange', handleHashChange);
@@ -1075,6 +1209,7 @@ handleHashChange();
 loadIndices().then(loadPatterns);
 loadSettings();
 loadWatchlist();
+renderMonthButtons();
 </script>
 </body>
 </html>

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>Pattern Research</title>
 <style>
-  * { box-sizing: border-box; }
+  *, *::before, *::after { box-sizing: border-box; }
   body{font-family:sans-serif;margin:0;background:#fafafa;display:flex;height:100vh;overflow:hidden}
 
   #sidebar{width:200px;flex-shrink:0;background:#1e2430;color:#cfd6e2;height:100vh;
@@ -88,6 +88,16 @@
   .successMsg{color:#1a7a1a;font-weight:bold}
   .monthBtn{padding:6px 10px;border:1px solid #ccc;background:#fff;cursor:pointer;border-radius:4px;margin:2px}
   .monthBtn.active{background:#4e8cff;color:#fff;border-color:#4e8cff}
+  #dashboardRow{display:flex;gap:1.5em;align-items:flex-start}
+  #dashboardLeft{flex:3;min-width:0}
+  #dashboardRight{flex:0.75;min-width:220px;border-left:3px solid #ccc;padding:0 1em;
+    height:calc(100vh - 3em);overflow-y:auto;position:sticky;top:0}
+  .sectionBox{margin-bottom:1.5em}
+  .indexCard{border:none;background:transparent;padding:0.5em 1.5em 0.5em 0;min-width:170px;font-size:1.05em;line-height:1.6}
+  .indexCard .idxLabel{font-weight:bold;margin-bottom:6px;font-size:1.15em}
+  .changePositive{color:#1a7a1a}
+  .changeNegative{color:#a32}
+  .watchlistVertical{display:flex;flex-direction:column;gap:0.6em}
 </style>
 </head>
 <body>
@@ -95,6 +105,7 @@
 <nav id="sidebar">
   <h1>Pattern Research</h1>
   <a class="navItem active" data-page="dashboard">Dashboard</a>
+  <a class="navItem" data-page="watchlist-full">Watchlist</a>
   <a class="navItem" data-page="market-research">Market Research</a>
   <a class="navItem" data-page="stock-research">Stock Research</a>
   <a class="navItem" data-page="pattern-stocks">Pattern Stocks</a>
@@ -105,20 +116,34 @@
 <div id="content">
 
   <div id="page-dashboard" class="page active">
-    <h1>Dashboard</h1>
-    <div id="discoveryBanner" class="note"></div>
-    <div class="controls">
-      <button id="updateDataBtn" type="button">Update Price Data</button>
-      <button id="fullRediscoveryBtn" type="button">Full Rediscovery</button>
-    </div>
-    <div id="jobProgress"></div>
+    <div id="dashboardRow">
+      <div id="dashboardLeft">
+        <h1>Dashboard</h1>
+        <div id="discoveryBanner" class="note"></div>
+        <div class="controls">
+          <button id="updateDataBtn" type="button">Update Price Data</button>
+          <button id="fullRediscoveryBtn" type="button">Full Rediscovery</button>
+        </div>
+        <div id="jobProgress"></div>
 
-    <h2>Watchlist</h2>
-    <div class="controls">
-      <label>Show top <input id="watchlistTopN" type="number" value="10" min="1"></label>
+        <div class="sectionBox">
+          <h2>Market Insights</h2>
+          <div id="miAsOf" style="font-size:0.85em;color:#666;margin-bottom:0.3em"></div>
+          <div id="miCards" style="display:flex;gap:2.5em;flex-wrap:wrap"></div>
+        </div>
+
+        <div class="sectionBox" id="monthHighlightsSection">
+          <h2 id="mhHeader"></h2>
+          <div id="mhContent"></div>
+        </div>
+      </div>
+
+      <div id="dashboardRight">
+        <h2><a href="#watchlist-full" style="color:inherit;text-decoration:none">Watchlist &rarr;</a></h2>
+        <div id="watchlistStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
+        <div id="watchlistCards" class="watchlistVertical"></div>
+      </div>
     </div>
-    <div id="watchlistStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
-    <div id="watchlistCards" class="watchlistGrid"></div>
   </div>
 
   <div id="page-market-research" class="page">
@@ -220,6 +245,13 @@
       <div id="diStockStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
       <div id="diStockCards" class="watchlistGrid"></div>
     </div>
+  </div>
+
+  <div id="page-watchlist-full" class="page">
+    <h1>Watchlist</h1>
+    <div class="note"><b>This report shows historical statistical patterns in price data. It is descriptive research, not investment advice, and not a recommendation to buy or sell any security.</b></div>
+    <div id="wlFullStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
+    <div id="wlFullCards" class="watchlistGrid"></div>
   </div>
 
 </div>
@@ -729,6 +761,8 @@ function renderJobProgress(status) {
     successVisible = true;
     loadPatterns();
     loadWatchlist();
+    loadMarketInsights();
+    loadMonthHighlights();
     if (psPatternId !== null) psLoad(psPatternId, psView);
   }
   previousJobStatus = status.status;
@@ -798,45 +832,61 @@ async function loadWatchlist() {
   const res = await fetch('/api/watchlist');
   lastWatchlistMatches = await res.json();
   renderWatchlist();
+  renderFullWatchlist();
 }
 
-function renderWatchlist() {
-  const matches = lastWatchlistMatches;
-  const status = document.getElementById('watchlistStatus');
-  const container = document.getElementById('watchlistCards');
-  if (!matches.length) {
-    status.textContent = '';
-    container.innerHTML = '<p class="placeholder">No current matches.</p>';
-    return;
-  }
+function buildWatchlistGroups(matches) {
   const byTicker = {};
   for (const m of matches) {
     (byTicker[m.ticker] = byTicker[m.ticker] || []).push(m);
   }
-  const allTickers = Object.keys(byTicker).sort((a, b) => {
+  return Object.keys(byTicker).sort((a, b) => {
     const topA = Math.max(...byTicker[a].map(m => m.historical_return));
     const topB = Math.max(...byTicker[b].map(m => m.historical_return));
     return topB - topA;
-  });
-  const topN = parseInt(document.getElementById('watchlistTopN').value, 10) || 10;
-  const tickers = allTickers.slice(0, topN);
-  status.textContent = `Showing ${tickers.length} of ${allTickers.length} tickers currently matching a historical pattern`;
-  container.innerHTML = tickers.map(t => {
+  }).map(t => {
     const group = byTicker[t].slice().sort((a, b) => b.historical_return - a.historical_return);
-    const top = group[0];
-    const extra = group.length - 1;
-    const pct = (top.historical_return >= 0 ? '+' : '') + (top.historical_return * 100).toFixed(2) + '%';
-    const sourceNote = top.return_source === 'stock' ? 'stock history' : 'market-wide';
-    return `<a class="watchlistCard" href="#stock-research?ticker=${t}" style="text-decoration:none;color:inherit;display:block">
-      <div class="ticker">${t}</div>
-      <div class="badge">${top.badge}</div>
-      <div class="return">${pct} historical return <span style="color:#999;font-size:0.75em">(${sourceNote})</span></div>
-      ${extra > 0 ? `<div class="extra">+${extra} more match${extra === 1 ? '' : 'es'}</div>` : ''}
-    </a>`;
-  }).join('');
+    return { ticker: t, top: group[0], extra: group.length - 1 };
+  });
 }
 
-document.getElementById('watchlistTopN').addEventListener('input', renderWatchlist);
+function watchlistCardHtml(entry) {
+  const pct = (entry.top.historical_return >= 0 ? '+' : '') + (entry.top.historical_return * 100).toFixed(2) + '%';
+  const sourceNote = entry.top.return_source === 'stock' ? 'stock history' : 'market-wide';
+  return `<a class="watchlistCard" href="#stock-research?ticker=${entry.ticker}" style="text-decoration:none;color:inherit;display:block">
+    <div class="ticker">${entry.ticker}</div>
+    <div class="badge">${entry.top.badge}</div>
+    <div class="return">${pct} historical return <span style="color:#999;font-size:0.75em">(${sourceNote})</span></div>
+    ${entry.extra > 0 ? `<div class="extra">+${entry.extra} more match${entry.extra === 1 ? '' : 'es'}</div>` : ''}
+  </a>`;
+}
+
+function renderWatchlist() {
+  const status = document.getElementById('watchlistStatus');
+  const container = document.getElementById('watchlistCards');
+  if (!lastWatchlistMatches.length) {
+    status.textContent = '';
+    container.innerHTML = '<p class="placeholder">No current matches.</p>';
+    return;
+  }
+  const groups = buildWatchlistGroups(lastWatchlistMatches);
+  const top10 = groups.slice(0, 10);
+  status.textContent = `Top ${top10.length} of ${groups.length} tickers`;
+  container.innerHTML = top10.map(watchlistCardHtml).join('');
+}
+
+function renderFullWatchlist() {
+  const status = document.getElementById('wlFullStatus');
+  const container = document.getElementById('wlFullCards');
+  if (!lastWatchlistMatches.length) {
+    status.textContent = '';
+    container.innerHTML = '<p class="placeholder">No current matches.</p>';
+    return;
+  }
+  const groups = buildWatchlistGroups(lastWatchlistMatches);
+  status.textContent = `${groups.length} tickers currently matching a historical pattern`;
+  container.innerHTML = groups.map(watchlistCardHtml).join('');
+}
 
 // ========================================================================
 // Stock Research page
@@ -1127,9 +1177,9 @@ function renderMonthButtons() {
       diMonth = parseInt(btn.dataset.month, 10);
       diLoadedTabs = new Set();
       renderMonthButtons();
-      diLoadTab(document.querySelector('.tabBtn.active[data-ditab]')?.dataset.ditab || 'patterns');
     });
   });
+  diLoadTab('patterns');
 }
 
 async function diLoadTab(tab) {
@@ -1202,6 +1252,72 @@ document.getElementById('diViewToggle').addEventListener('click', () => {
 });
 
 // ========================================================================
+// Dashboard: Market Insights & Month Highlights
+// ========================================================================
+async function loadMarketInsights() {
+  const res = await fetch('/api/dashboard/market-insights');
+  const data = await res.json();
+  document.getElementById('miAsOf').textContent = data.as_of
+    ? `Data as of ${data.as_of} (most recent completed trading session)` : '';
+  document.getElementById('miCards').innerHTML = data.indices.map(idx => {
+    const row = (label, val) => {
+      const cls = val == null ? '' : (val >= 0 ? 'changePositive' : 'changeNegative');
+      return `<div>${label}: <span class="${cls}">${val == null ? '--' : fmtPct(val)}</span></div>`;
+    };
+    return `<div class="indexCard">
+      <div class="idxLabel">${idx.label}</div>
+      ${row('Day', idx.day)}${row('Week', idx.week)}${row('Month', idx.month)}
+    </div>`;
+  }).join('');
+}
+
+const FULL_MONTH_NAMES = ['January','February','March','April','May','June','July','August',
+                          'September','October','November','December'];
+
+async function loadMonthHighlights() {
+  const res = await fetch('/api/dashboard/month-highlights');
+  const data = await res.json();
+  document.getElementById('mhHeader').innerHTML =
+    `${FULL_MONTH_NAMES[data.month - 1]}'s History <a href="#date-insights" style="font-size:0.55em;margin-left:0.5em">View Date Insights &rarr;</a>`;
+
+  const content = document.getElementById('mhContent');
+  if (!data.patterns.length) {
+    content.innerHTML = '<p class="placeholder">Time to relax -- nothing notable this month.</p>';
+    return;
+  }
+
+  const stockCards = data.stocks.map(s => {
+    const pct = (s.return >= 0 ? '+' : '') + (s.return * 100).toFixed(2) + '%';
+    return `<a class="watchlistCard" href="#stock-research?ticker=${s.ticker}" style="text-decoration:none;color:inherit;display:block">
+      <div class="ticker">${s.ticker}</div>
+      <div class="badge">${s.badge}</div>
+      <div class="return">${pct} historical return</div>
+    </a>`;
+  }).join('');
+
+  const patternRows = data.patterns.map(p => {
+    const pct = (p.return >= 0 ? '+' : '') + (p.return * 100).toFixed(2) + '%';
+    const cls = p.return >= 0 ? 'changePositive' : 'changeNegative';
+    return `<tr>
+      <td>${p.conditions_html}</td>
+      <td style="text-align:right" class="${cls}">${pct}</td>
+      <td><a href="#pattern-stocks?pattern_id=${p.pattern_id}&view=${p.view}">View stocks \u2192</a></td>
+    </tr>`;
+  }).join('');
+
+  content.innerHTML = `<div style="display:flex;flex-wrap:wrap">
+    <div style="flex:0.7;min-width:280px">
+      <h3 style="font-size:0.95em;margin-bottom:0.4em">Top Stocks</h3>
+      <div class="watchlistGrid">${stockCards}</div>
+    </div>
+    <div style="flex:1;min-width:280px">
+      <h3 style="font-size:0.95em;margin-bottom:0.4em">Top Patterns</h3>
+      <table style="font-size:0.78em"><tbody>${patternRows}</tbody></table>
+    </div>
+  </div>`;
+}
+
+// ========================================================================
 // Initial load
 // ========================================================================
 window.addEventListener('hashchange', handleHashChange);
@@ -1210,6 +1326,8 @@ loadIndices().then(loadPatterns);
 loadSettings();
 loadWatchlist();
 renderMonthButtons();
+loadMarketInsights();
+loadMonthHighlights();
 </script>
 </body>
 </html>

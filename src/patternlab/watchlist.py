@@ -1,10 +1,11 @@
 from __future__ import annotations
 import json
 from pathlib import Path
+import numpy as np
 import pandas as pd
 from patternlab.buckets import CATEGORICAL
 from patternlab.reports import build_pattern_context, passes_direction_filter
-from patternlab.humanize import badge_text
+from patternlab.humanize import badge_text, conditions_html
 
 
 def apply_bucket_scalar(value, edges: list[float]) -> int | None:
@@ -27,7 +28,18 @@ def load_edges(conn) -> dict[str, list[float]]:
     return edges
 
 
-def latest_feature_row(feat_dir: Path, ticker: str) -> pd.Series | None:
+def load_latest_snapshot(cfg: dict) -> pd.DataFrame:
+    """The cheap, pre-built one-row-per-ticker snapshot M2 writes. Falls
+    back to the slow per-file path (one read per ticker) if the snapshot
+    hasn't been generated yet (e.g. an older data/features/ directory from
+    before this optimization existed) -- still correct, just slower."""
+    path = Path(cfg["data_dir"]) / "features" / "_latest_snapshot.parquet"
+    if path.exists():
+        return pd.read_parquet(path)
+    return pd.DataFrame()
+
+
+def _legacy_latest_feature_row(feat_dir: Path, ticker: str) -> pd.Series | None:
     path = feat_dir / f"{ticker}.parquet"
     if not path.exists():
         return None
@@ -37,83 +49,58 @@ def latest_feature_row(feat_dir: Path, ticker: str) -> pd.Series | None:
     return df.iloc[-1]
 
 
-def current_bucket(feature: str, row: pd.Series, edges_by_feature: dict) -> int | None:
-    if feature in CATEGORICAL:
-        v = row.get(feature)
-        return None if pd.isna(v) else int(v)
-    return apply_bucket_scalar(row.get(feature), edges_by_feature.get(feature, []))
-
-def load_stock_returns(conn, pattern_ids: set[int], ticker_filter: str | None = None) -> dict:
-    """(ticker, pattern_id, view) -> per-stock mean forward return, for
-    patterns that cleared the per-stock minimum-occurrence bar (nulls from
-    thin samples are already excluded -- see by_stock.py's per_stock_breakdown).
-    """
-    if not pattern_ids:
-        return {}
-    placeholders = ",".join("?" for _ in pattern_ids)
-    query = (f"SELECT pattern_id, ticker, view, mean_fwd_return FROM pattern_results_by_stock "
-            f"WHERE split='full' AND pattern_id IN ({placeholders})")
-    params = list(pattern_ids)
-    if ticker_filter:
-        query += " AND ticker = ?"
-        params.append(ticker_filter)
-    df = pd.read_sql(query, conn, params=params)
-    return {(r["ticker"], int(r["pattern_id"]), r["view"]): float(r["mean_fwd_return"])
-           for _, r in df.iterrows() if pd.notna(r["mean_fwd_return"])}
-
-def compute_watchlist(cfg: dict, uni: pd.DataFrame, conn, only_ticker: str | None = None) -> list[dict]:
-    """Flat (ticker, pattern_id, view, ...) match rows. only_ticker scopes
-    this to a single stock (cheap -- loads one feature file instead of the
-    whole universe), used by the Stock Research page's live-match tab.
-    historical_return prefers the per-stock figure when one exists and is
-    reliable (>=30 occurrences for that stock); falls back to the pooled
-    market-wide figure otherwise. return_source records which was used,
-    so the two are never silently conflated in the UI again."""
+def get_snapshot(cfg: dict, uni: pd.DataFrame) -> pd.DataFrame:
+    """Snapshot indexed by ticker, restricted to uni's tickers. Uses the
+    fast cached path when available, otherwise rebuilds it the slow way
+    (and this is the only place that slow path still runs)."""
+    snap = load_latest_snapshot(cfg)
+    if not snap.empty:
+        return snap.loc[snap.index.intersection(uni["data_ticker"])]
     feat_dir = Path(cfg["data_dir"]) / "features"
-
-    context = build_pattern_context(conn)
-    if context.empty:
-        return []
-    kept = context[context.apply(passes_direction_filter, axis=1)]
-
-    edges_by_feature = load_edges(conn)
-    stock_returns = load_stock_returns(conn, set(int(i) for i in kept.index), ticker_filter=only_ticker)
-
-    rows_by_ticker: dict[str, pd.Series] = {}
-    tickers = [only_ticker] if only_ticker else list(uni["data_ticker"])
-    for t in tickers:
-        r = latest_feature_row(feat_dir, t)
+    rows = {}
+    for t in uni["data_ticker"]:
+        r = _legacy_latest_feature_row(feat_dir, t)
         if r is not None:
-            rows_by_ticker[t] = r
+            rows[t] = r
+    return pd.DataFrame(rows).T if rows else pd.DataFrame()
 
-    matches = []
-    for pattern_id, prow in kept.iterrows():
-        conditions = json.loads(prow["conditions_json"])
-        for view in ("all", "flagged"):
-            if pd.isna(prow[f"effect_{view}"]):
-                continue  # this pattern didn't pass in this view
-            market_return = float(prow[f"mean_fwd_return_{view}"])
-            for ticker, frow in rows_by_ticker.items():
-                if all(current_bucket(c["feature"], frow, edges_by_feature) == c["bucket"]
-                      for c in conditions):
-                    stock_specific = stock_returns.get((ticker, int(pattern_id), view))
-                    matches.append({
-                        "ticker": ticker,
-                        "pattern_id": int(pattern_id),
-                        "view": view,
-                        "description": prow["description"],
-                        "conditions": conditions,
-                        "historical_return": stock_specific if stock_specific is not None else market_return,
-                        "return_source": "stock" if stock_specific is not None else "market",
-                        "as_of_date": str(frow.name.date()),
-                    })
-    return matches
+
+def bucket_snapshot(snapshot: pd.DataFrame, edges_by_feature: dict[str, list[float]]) -> pd.DataFrame:
+    """Vectorized bucketing of every ticker's every feature at once -- one
+    pd.cut call per continuous feature across all tickers, instead of a
+    Python function call per (ticker, feature) pair."""
+    out = pd.DataFrame(index=snapshot.index)
+    for col in snapshot.columns:
+        if col in CATEGORICAL:
+            out[col] = snapshot[col]
+            continue
+        edges = edges_by_feature.get(col)
+        if not edges:
+            continue
+        bounds = [-np.inf] + edges + [np.inf]
+        out[col] = pd.cut(snapshot[col], bins=bounds, labels=list(range(len(bounds) - 1)),
+                          include_lowest=True).astype("Int8")
+    return out
+
+
+def matches_for_conditions(bucketed: pd.DataFrame, conditions: list[dict]) -> pd.Index:
+    """Tickers (index values) satisfying every condition -- one boolean mask
+    per condition, ANDed together, all vectorized."""
+    mask = pd.Series(True, index=bucketed.index)
+    for c in conditions:
+        if c["feature"] not in bucketed.columns:
+            return pd.Index([])
+        mask &= (bucketed[c["feature"]] == c["bucket"])
+    return bucketed.index[mask]
+
 
 def load_stock_stats(conn, pattern_ids: set[int], ticker_filter: str | None = None) -> dict:
-    """(ticker, pattern_id, view) -> {n, mean_fwd_return, hit_rate, effect} for
-    stock-level stats that cleared the per-stock minimum-occurrence bar
-    (by_stock.py nulls mean/hit_rate/effect together when a stock falls
-    short, so checking mean_fwd_return is enough to detect 'unconfirmed')."""
+    """(ticker, pattern_id, view) -> per-stock stats for patterns that
+    cleared the per-stock minimum-occurrence bar. Built via zip() over raw
+    columns rather than df.iterrows() -- iterrows() constructs a full
+    pandas Series per row, which gets very slow once the result set is in
+    the tens of thousands of rows (as it can be here: patterns x tickers x
+    views)."""
     if not pattern_ids:
         return {}
     placeholders = ",".join("?" for _ in pattern_ids)
@@ -124,36 +111,75 @@ def load_stock_stats(conn, pattern_ids: set[int], ticker_filter: str | None = No
         query += " AND ticker = ?"
         params.append(ticker_filter)
     df = pd.read_sql(query, conn, params=params)
+    df = df.dropna(subset=["mean_fwd_return"])
+
     out = {}
-    for _, r in df.iterrows():
-        if pd.isna(r["mean_fwd_return"]):
-            continue
-        out[(r["ticker"], int(r["pattern_id"]), r["view"])] = {
-            "n": int(r["n"]), "mean_fwd_return": float(r["mean_fwd_return"]),
-            "hit_rate": None if pd.isna(r["hit_rate"]) else float(r["hit_rate"]),
-            "effect": float(r["effect"]),
+    for ticker, pid, view, n, mfr, hr, eff in zip(
+            df["ticker"], df["pattern_id"], df["view"], df["n"],
+            df["mean_fwd_return"], df["hit_rate"], df["effect"]):
+        out[(ticker, int(pid), view)] = {
+            "n": int(n), "mean_fwd_return": float(mfr),
+            "hit_rate": None if pd.isna(hr) else float(hr),
+            "effect": float(eff),
         }
     return out
 
 
-def compute_matching_table(cfg: dict, uni: pd.DataFrame, conn, ticker: str) -> list[dict]:
-    """Every live match for one ticker. 'confirmed' is True when this
-    stock has its own reliable (>=30 occurrence) history for the pattern;
-    in that case stock-specific Return/Edge/Hit Rate are used. Otherwise
-    falls back to the pooled market-wide figures, with confirmed=False so
-    the UI can label it rather than silently mixing the two -- same
-    fallback principle as the dashboard watchlist card, but exposing the
-    distinction explicitly instead of hiding it behind one number."""
-    feat_dir = Path(cfg["data_dir"]) / "features"
-    frow = latest_feature_row(feat_dir, ticker)
-    if frow is None:
+def compute_watchlist(cfg: dict, uni: pd.DataFrame, conn, only_ticker: str | None = None) -> list[dict]:
+    """Flat (ticker, pattern_id, view, ...) match rows."""
+    context = build_pattern_context(conn)
+    if context.empty:
         return []
+    kept = context[context.apply(passes_direction_filter, axis=1)]
+
+    edges_by_feature = load_edges(conn)
+    snapshot = get_snapshot(cfg, uni)
+    if only_ticker:
+        snapshot = snapshot.loc[snapshot.index.intersection([only_ticker])]
+    if snapshot.empty:
+        return []
+    bucketed = bucket_snapshot(snapshot, edges_by_feature)
+
+    stock_returns = load_stock_stats(conn, set(int(i) for i in kept.index), ticker_filter=only_ticker)
+
+    matches = []
+    for pattern_id, prow in kept.iterrows():
+        conditions = json.loads(prow["conditions_json"])
+        matching_tickers = matches_for_conditions(bucketed, conditions)
+        if len(matching_tickers) == 0:
+            continue
+        for view in ("all", "flagged"):
+            if pd.isna(prow[f"effect_{view}"]):
+                continue
+            market_return = float(prow[f"mean_fwd_return_{view}"])
+            for ticker in matching_tickers:
+                stats = stock_returns.get((ticker, int(pattern_id), view))
+                matches.append({
+                    "ticker": ticker,
+                    "pattern_id": int(pattern_id),
+                    "view": view,
+                    "description": prow["description"],
+                    "conditions": conditions,
+                    "historical_return": stats["mean_fwd_return"] if stats else market_return,
+                    "return_source": "stock" if stats else "market",
+                    "as_of_date": None,
+                })
+    return matches
+
+
+def compute_matching_table(cfg: dict, uni: pd.DataFrame, conn, ticker: str) -> list[dict]:
+    """Every live match for one ticker, with stock-confirmed/market-wide fallback."""
+    snapshot = get_snapshot(cfg, uni)
+    if ticker not in snapshot.index:
+        return []
+    row_frame = snapshot.loc[[ticker]]
 
     context = build_pattern_context(conn)
     if context.empty:
         return []
     kept = context[context.apply(passes_direction_filter, axis=1)]
     edges_by_feature = load_edges(conn)
+    bucketed = bucket_snapshot(row_frame, edges_by_feature)
 
     pattern_ids = set(int(i) for i in kept.index)
     stock_stats = load_stock_stats(conn, pattern_ids, ticker_filter=ticker)
@@ -161,8 +187,7 @@ def compute_matching_table(cfg: dict, uni: pd.DataFrame, conn, ticker: str) -> l
     rows = []
     for pattern_id, prow in kept.iterrows():
         conditions = json.loads(prow["conditions_json"])
-        if not all(current_bucket(c["feature"], frow, edges_by_feature) == c["bucket"]
-                  for c in conditions):
+        if len(matches_for_conditions(bucketed, conditions)) == 0:
             continue
         for view in ("all", "flagged"):
             if pd.isna(prow[f"effect_{view}"]):
@@ -191,7 +216,6 @@ def compute_matching_table(cfg: dict, uni: pd.DataFrame, conn, ticker: str) -> l
 
 
 def matching_table_to_api_rows(rows: list[dict], edges_by_feature: dict) -> list[dict]:
-    from patternlab.humanize import conditions_html
     out = []
     for r in rows:
         entry = dict(r)
@@ -199,12 +223,9 @@ def matching_table_to_api_rows(rows: list[dict], edges_by_feature: dict) -> list
         out.append(entry)
     return out
 
-def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int) -> list[dict]:
-    """Every ticker currently matching ONE fixed pattern -- the inverse
-    pivot of compute_matching_table (which fixes ticker, varies pattern).
-    Same stock-confirmed/market-wide fallback logic and confirmation flag."""
-    feat_dir = Path(cfg["data_dir"]) / "features"
 
+def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int) -> list[dict]:
+    """Every ticker currently matching ONE fixed pattern."""
     context = build_pattern_context(conn)
     if context.empty or pattern_id not in context.index:
         return []
@@ -214,16 +235,16 @@ def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int)
 
     conditions = json.loads(prow["conditions_json"])
     edges_by_feature = load_edges(conn)
+    snapshot = get_snapshot(cfg, uni)
+    if snapshot.empty:
+        return []
+    bucketed = bucket_snapshot(snapshot, edges_by_feature)
+    matching_tickers = matches_for_conditions(bucketed, conditions)
+
     stock_stats = load_stock_stats(conn, {pattern_id})
 
     rows = []
-    for ticker in uni["data_ticker"]:
-        frow = latest_feature_row(feat_dir, ticker)
-        if frow is None:
-            continue
-        if not all(current_bucket(c["feature"], frow, edges_by_feature) == c["bucket"]
-                  for c in conditions):
-            continue
+    for ticker in matching_tickers:
         for view in ("all", "flagged"):
             if pd.isna(prow[f"effect_{view}"]):
                 continue
@@ -242,10 +263,9 @@ def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int)
             })
     return rows
 
+
 def compute_month_patterns_context(conn, month: int) -> pd.DataFrame:
-    """Pattern rows (same shape as build_pattern_context) whose conditions
-    include month == the given bucket (1-12). Powers Date Insights'
-    Patterns tab, which reuses Market Research's row format as-is."""
+    """Pattern rows whose conditions include month == the given bucket."""
     context = build_pattern_context(conn)
     if context.empty:
         return context
@@ -259,11 +279,7 @@ def compute_month_patterns_context(conn, month: int) -> pd.DataFrame:
 
 
 def compute_month_stock_matches(conn, month: int) -> list[dict]:
-    """Flat (ticker, pattern_id, view) rows for Date Insights' Stocks tab.
-    Purely historical -- a stock appears here only if it has enough of its
-    own historical occurrences (per load_stock_stats' reliability floor) of
-    a pattern whose conditions include this month. No live or current data
-    is read; this reflects what already happened, not today's values."""
+    """Purely historical -- no live/current data read at all."""
     context = compute_month_patterns_context(conn, month)
     if context.empty:
         return []
@@ -286,3 +302,38 @@ def compute_month_stock_matches(conn, month: int) -> list[dict]:
             "hit_rate": stats["hit_rate"],
         })
     return matches
+
+
+def compute_current_month_highlights(conn, month: int) -> dict:
+    """Top 5 patterns and top 5 stocks for the given month."""
+    context = compute_month_patterns_context(conn, month)
+    if context.empty:
+        return {"patterns": [], "stocks": []}
+
+    edges_by_feature = load_edges(conn)
+    top_patterns = context.sort_values("rank_key", ascending=False).head(5)
+    pattern_cards = []
+    for pid, row in top_patterns.iterrows():
+        eff_all = row["effect_all"] if pd.notna(row["effect_all"]) else None
+        eff_flag = row["effect_flagged"] if pd.notna(row["effect_flagged"]) else None
+        if eff_all is not None and (eff_flag is None or abs(eff_all) >= abs(eff_flag)):
+            view, ret = "all", float(row["mean_fwd_return_all"])
+        else:
+            view, ret = "flagged", float(row["mean_fwd_return_flagged"])
+        pattern_cards.append({
+            "pattern_id": int(pid), "view": view,
+            "conditions_html": conditions_html(row["description"], edges_by_feature),
+            "return": ret,
+        })
+
+    stock_matches = compute_month_stock_matches(conn, month)
+    by_ticker: dict[str, dict] = {}
+    for m in stock_matches:
+        cur = by_ticker.get(m["ticker"])
+        if cur is None or m["historical_return"] > cur["historical_return"]:
+            by_ticker[m["ticker"]] = m
+    top_stocks = sorted(by_ticker.values(), key=lambda m: m["historical_return"], reverse=True)[:5]
+    stock_cards = [{"ticker": m["ticker"], "badge": m["badge"], "return": m["historical_return"]}
+                  for m in top_stocks]
+
+    return {"patterns": pattern_cards, "stocks": stock_cards}

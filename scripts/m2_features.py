@@ -1,5 +1,6 @@
 import json
 import time
+import pandas as pd
 from pathlib import Path
 from patternlab.config import load_config, ensure_dirs, manifest_path
 from patternlab.universe_fetch import get_universe, get_index_proxy
@@ -31,6 +32,26 @@ def main() -> None:
             complete_rows += int(f.drop(columns=["tradable"]).notna().all(axis=1).sum())
         except Exception as e:
             failed.append((t, str(e)))
+
+    # Cheap extra artifact for live-matching pages (watchlist, pattern
+    # matching, pattern stocks, date insights) -- one row per ticker instead
+    # of 503 separate full-history files. Nothing new is computed here; this
+    # just gathers each ticker's already-finished last row into one table.
+    last_rows = []
+    for t in uni["data_ticker"]:
+        path = out_dir / f"{t}.parquet"
+        if not path.exists():
+            continue
+        df = pd.read_parquet(path)
+        if df.empty or not bool(df["tradable"].iloc[-1]):
+            continue
+        row = df.iloc[-1].copy()
+        row["ticker"] = t
+        last_rows.append(row)
+    if last_rows:
+        snapshot = pd.DataFrame(last_rows).set_index("ticker")
+        snapshot.to_parquet(out_dir / "_latest_snapshot.parquet")
+        print(f"Latest-snapshot cache: {len(snapshot)} tickers")
 
     manifest = json.loads(manifest_path(cfg).read_text())
     meta = {"price_data_version": manifest["data_version"],

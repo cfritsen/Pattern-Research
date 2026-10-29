@@ -13,7 +13,9 @@ from patternlab.reports import build_pattern_context, pattern_view, to_api_rows,
 from patternlab.humanize import badge_text, FEATURE_INFO, ALL_FEATURES, conditions_html
 from patternlab.universe_fetch import get_universe, get_index_proxy, PROVIDERS
 from patternlab.jobs import start_job, get_status, discovery_status, STAGES
-from patternlab.watchlist import compute_watchlist, load_edges, compute_matching_table, matching_table_to_api_rows, compute_pattern_matches, compute_month_patterns_context, compute_month_stock_matches
+from patternlab.watchlist import compute_watchlist, load_edges, compute_matching_table, matching_table_to_api_rows, compute_pattern_matches, compute_month_patterns_context, compute_month_stock_matches, compute_current_month_highlights
+from datetime import datetime
+from patternlab.market_insights import compute_market_insights
 
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "web" / "static"
@@ -285,6 +287,25 @@ def api_date_insights_stocks():
     conn = connect(cfg)
     matches = compute_month_stock_matches(conn, month)
     return jsonify(matches)
+
+@app.get("/api/dashboard/market-insights")
+def api_market_insights():
+    cfg = read_raw_config()
+    return jsonify(compute_market_insights(cfg))
+
+
+@app.get("/api/dashboard/month-highlights")
+def api_month_highlights():
+    cfg0 = read_raw_config()
+    index = request.args.get("index", cfg0.get("index", "sp500"))
+    if index not in PROVIDERS:
+        return jsonify({"error": f"Unknown index {index!r}"}), 400
+    cfg = _cfg_for(index)
+    conn = connect(cfg)
+    month = datetime.now().month
+    data = compute_current_month_highlights(conn, month)
+    data["month"] = month
+    return jsonify(data)
 
 if __name__ == "__main__":
     # threaded=True so status polls are served while a job's background

@@ -99,6 +99,13 @@ def _run_chain(job_name: str, stage_ids: list[str]):
                               error=f"{stage['label']} ({stage_id}) failed. Last output:\n{tail}")
             return
 
+        # M1 fetches price data in BOTH jobs (incrementally for update_data,
+        # a full refresh for full_rediscovery) -- record it here, at the
+        # stage level, so "last price data update" reflects whichever job
+        # most recently actually ran a fetch, not just one of the two.
+        if stage_id == "m1":
+            _record_price_update_completion()
+
     if job_name == "full_rediscovery":
         _record_discovery_completion()
 
@@ -123,6 +130,34 @@ def _discovery_log_path(index: str) -> Path:
     d = PROJECT_ROOT / "data"
     d.mkdir(parents=True, exist_ok=True)
     return d / f"discovery_log_{index}.json"
+
+
+def _price_update_log_path(index: str) -> Path:
+    d = PROJECT_ROOT / "data"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"price_update_log_{index}.json"
+
+
+def _record_price_update_completion():
+    from patternlab.config import read_raw_config
+    cfg = read_raw_config()
+    _price_update_log_path(cfg["index"]).write_text(json.dumps({
+        "completed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }, indent=2))
+
+
+def price_update_status() -> dict:
+    """Last time price data (M1) was fetched for the currently configured
+    index, via either Update Price Data or Full Rediscovery -- both run M1."""
+    from patternlab.config import read_raw_config
+    cfg = read_raw_config()
+    path = _price_update_log_path(cfg["index"])
+    if not path.exists():
+        return {"completed_at": None, "days_ago": None, "never_run": True}
+    data = json.loads(path.read_text())
+    completed = datetime.fromisoformat(data["completed_at"])
+    days_ago = (datetime.now(timezone.utc) - completed).days
+    return {"completed_at": data["completed_at"], "days_ago": days_ago, "never_run": False}
 
 
 def _record_discovery_completion():

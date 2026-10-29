@@ -41,14 +41,18 @@
   h2{font-size:1.15em;margin-bottom:0.5em}
 
   #sidebar{width:200px;flex-shrink:0;background:var(--surface);color:var(--text-muted);height:100vh;
-    overflow-y:auto;padding:1.25em 0;border-right:1px solid var(--border)}
+    overflow-y:auto;padding:1.25em 0;border-right:1px solid var(--border);display:flex;flex-direction:column}
   #sidebar h1{font-size:1.2em;color:var(--text);padding:0 1.1em;margin:0 0 1.2em}
   .navItem{display:block;padding:0.6em 1.1em;cursor:pointer;color:var(--text-muted);text-decoration:none;
-    border-left:3px solid transparent;font-size:0.92em}
+    border-left:3px solid transparent;font-size:0.92em;flex-shrink:0}
   .navItem:hover{background:var(--elevated);color:var(--text)}
+  .navDivider{height:1px;background:var(--border);margin:0.6em 1.1em;flex-shrink:0}
+  .navReserved{flex-shrink:0;padding:0 1.1em}
+  #navIndexLabel{display:block;font-size:0.72em;letter-spacing:0.02em;color:var(--text-faint);margin-bottom:3px}
+  #navIndexSelect{width:100%;max-width:none;margin-right:0}
   .navItem.active{background:var(--elevated);border-left-color:var(--accent);color:var(--accent)}
 
-  #content{flex:1;overflow-y:auto;padding:1.75em 2.25em}
+  #content{--content-pad-y:1.75em;flex:1;overflow-y:auto;padding:var(--content-pad-y) 2.25em}
   .page{display:none}
   .page.active{display:block}
 
@@ -143,7 +147,7 @@
   #dashboardRow{display:flex;gap:1.75em;align-items:flex-start}
   #dashboardLeft{flex:3;min-width:0}
   #dashboardRight{flex:0.75;min-width:220px;border-left:1px solid var(--border);padding:0 1.25em;
-    height:calc(100vh - 3em);overflow-y:auto;position:sticky;top:0}
+    height:calc(100vh - (2 * var(--content-pad-y)));overflow-y:auto;position:sticky;top:0}
   .sectionBox{margin-bottom:1.75em}
   #miCards{background:var(--surface);border-left:3px solid var(--accent);padding:0.65em 1.2em}
   .indexCard{border:none;background:transparent;
@@ -159,12 +163,19 @@
 <nav id="sidebar">
   <h1>Pattern Research</h1>
   <a class="navItem active" data-page="dashboard">Dashboard</a>
+  <div class="navDivider"></div>
+  <div class="navReserved">
+    <label id="navIndexLabel" for="navIndexSelect">Index</label>
+    <select id="navIndexSelect"></select>
+  </div>
+  <div class="navDivider"></div>
   <a class="navItem" data-page="watchlist-full">Watchlist</a>
+  <div class="navDivider"></div>
   <a class="navItem" data-page="market-research">Market Research</a>
   <a class="navItem" data-page="stock-research">Stock Research</a>
-  <a class="navItem" data-page="pattern-stocks">Pattern Stocks</a>
+  <a class="navItem" data-page="pattern-stocks">Stocks by Pattern</a>
   <a class="navItem" data-page="date-insights">Date Insights</a>
-  <a class="navItem" data-page="settings">Settings</a>
+  <a class="navItem" data-page="settings" style="margin-top:auto">Settings</a>
 </nav>
 
 <div id="content">
@@ -205,8 +216,6 @@
     <div class="note"><b>This report shows historical statistical patterns in price data. It is descriptive research, not investment advice, and not a recommendation to buy or sell any security.</b></div>
 
     <div class="controls">
-      <label>Index: <select id="indexSelect"></select></label>
-      <button id="loadBtn">Load</button>
       <button id="viewToggle" type="button">View: All Data</button>
       <label>Show top <input id="topN" type="number" value="25" min="1"></label>
       <span id="status"></span>
@@ -259,7 +268,7 @@
   </div>
 
   <div id="page-pattern-stocks" class="page">
-    <h1>Pattern Stocks</h1>
+    <h1>Stocks by Pattern</h1>
     <div id="psHeader"><p class="placeholder">Select a pattern from <a href="#market-research">Market Research</a> to see its matching stocks.</p></div>
     <div class="controls">
       <button id="psViewToggle" type="button">View: All Data</button>
@@ -355,6 +364,56 @@ function handleHashChange() {
 }
 
 // ========================================================================
+// Index selector (sidebar) -- the only place the active index is chosen.
+// Every page's data requests use currentIndex; Settings and Market
+// Research no longer have their own index controls.
+// ========================================================================
+let currentIndex = 'sp500';
+
+// Friendly display names for index provider keys. Add an entry here
+// whenever a new index loader is added to PROVIDERS (universe_fetch.py) --
+// any key missing from this map just falls back to showing its raw value.
+const INDEX_LABELS = {
+  sp500: 'S&P 500',
+};
+
+async function populateNavIndexSelector() {
+  const res = await fetch('/api/indices');
+  const indices = await res.json();
+  const sel = document.getElementById('navIndexSelect');
+  sel.innerHTML = indices.map(i => `<option value="${i}" ${i === currentIndex ? 'selected' : ''}>${INDEX_LABELS[i] || i}</option>`).join('');
+}
+
+async function onNavIndexChange(e) {
+  const sel = e.target;
+  const newIndex = sel.value;
+  const previousIndex = currentIndex;
+  sel.disabled = true;
+  const res = await fetch('/api/set-index', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ index: newIndex }),
+  });
+  sel.disabled = false;
+  if (!res.ok) {
+    alert((await res.json()).error);
+    sel.value = previousIndex;
+    return;
+  }
+  currentIndex = newIndex;
+  loadPatterns();
+  loadWatchlist();
+  loadMonthHighlights();
+  if (srTicker) srSearch(srTicker);
+  if (psPatternId !== null) psLoad(psPatternId, psView);
+  const activeDiTab = document.querySelector('.tabBtn[data-ditab].active');
+  diLoadedTabs = new Set();
+  if (activeDiTab) diLoadTab(activeDiTab.dataset.ditab);
+}
+
+document.getElementById('navIndexSelect').addEventListener('change', onNavIndexChange);
+
+// ========================================================================
 // Market Research page
 // ========================================================================
 let rawRows = [];
@@ -425,17 +484,10 @@ function initFilters() {
   }
 }
 
-async function loadIndices() {
-  const res = await fetch('/api/indices');
-  const indices = await res.json();
-  document.getElementById('indexSelect').innerHTML = indices.map(i => `<option value="${i}">${i}</option>`).join('');
-}
-
 async function loadPatterns() {
   const status = document.getElementById('status');
-  const index = document.getElementById('indexSelect').value;
   status.textContent = ' Loading...';
-  const res = await fetch(`/api/patterns?index=${encodeURIComponent(index)}`);
+  const res = await fetch(`/api/patterns?index=${encodeURIComponent(currentIndex)}`);
   rawRows = await res.json();
   sortState = { col: 'edge', ascending: false };
   initFilters();
@@ -617,7 +669,6 @@ document.addEventListener('click', e => {
   if (!e.target.closest('.popover') && !e.target.closest('.funnel')) closePopovers();
 });
 
-document.getElementById('loadBtn').addEventListener('click', loadPatterns);
 document.getElementById('filterInput').addEventListener('input', render);
 document.getElementById('topN').addEventListener('input', render);
 document.getElementById('viewToggle').addEventListener('click', () => {
@@ -647,6 +698,7 @@ async function loadSettings() {
   const data = await res.json();
   settingsFields = data.fields;
   settingsValues = data.config;
+  currentIndex = settingsValues.index || 'sp500';
   allFeatures = data.all_features;
   renderConfigErrors(data.errors);
   renderSettingsForm();
@@ -727,6 +779,7 @@ function collectFormValues() {
   const cfg = {};
   cfg.data_dir = settingsValues.data_dir;
   cfg.report_dir = settingsValues.report_dir;
+  cfg.index = currentIndex;
   settingsFields.forEach(f => {
     const el = document.querySelector(`[data-key="${f.key}"]`);
     if (f.type === 'boolean') cfg[f.key] = el.checked;
@@ -799,13 +852,20 @@ function fmtElapsed(startIso) {
   return `${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
-function renderDiscoveryBanner(d) {
+function renderDiscoveryBanner(priceUpdate, d) {
   const box = document.getElementById('discoveryBanner');
+
+  // Price Data Update first, then Full Rediscovery -- same order as the
+  // two buttons above this banner.
+  const priceMsg = priceUpdate.never_run
+    ? 'Price data has never been updated for this index.'
+    : `Last Price Data Update: ${new Date(priceUpdate.completed_at).toLocaleString()} (${priceUpdate.days_ago} day${priceUpdate.days_ago === 1 ? '' : 's'} ago).`;
+
   if (d.never_run) {
-    box.innerHTML = '<b>Full Rediscovery has never been run for this index.</b> Run it to generate results.';
+    box.innerHTML = `${priceMsg} <b>Full Rediscovery has never been run for this index.</b> Run it to generate results.`;
     return;
   }
-  let msg = `Last Full Rediscovery: ${new Date(d.completed_at).toLocaleString()} (${d.days_ago} day${d.days_ago === 1 ? '' : 's'} ago).`;
+  let msg = `${priceMsg} Last Full Rediscovery: ${new Date(d.completed_at).toLocaleString()} (${d.days_ago} day${d.days_ago === 1 ? '' : 's'} ago).`;
   if (d.config_changed) msg += ' <b>Settings have changed since then</b> -- consider running Full Rediscovery again.';
   else if (d.days_ago >= 30) msg += ' <b>It has been over a month</b> -- consider running Full Rediscovery again.';
   box.innerHTML = msg;
@@ -862,7 +922,7 @@ function renderJobProgress(status) {
 async function pollJobStatus() {
   const res = await fetch('/api/jobs/status');
   const status = await res.json();
-  renderDiscoveryBanner(status.discovery);
+  renderDiscoveryBanner(status.price_update, status.discovery);
   renderJobProgress(status);
 }
 
@@ -887,7 +947,7 @@ let lastWatchlistMatches = [];
 async function loadWatchlist() {
   const status = document.getElementById('watchlistStatus');
   status.textContent = 'Loading...';
-  const res = await fetch('/api/watchlist');
+  const res = await fetch(`/api/watchlist?index=${encodeURIComponent(currentIndex)}`);
   lastWatchlistMatches = await res.json();
   renderWatchlist();
   renderFullWatchlist();
@@ -1001,8 +1061,8 @@ async function srSearch(ticker) {
   const status = document.getElementById('srStatus');
   status.textContent = ' Loading...';
   const [stockRes, matchRes] = await Promise.all([
-    fetch(`/api/stock-research?ticker=${encodeURIComponent(srTicker)}`),
-    fetch(`/api/stock-matching?ticker=${encodeURIComponent(srTicker)}`),
+    fetch(`/api/stock-research?ticker=${encodeURIComponent(srTicker)}&index=${encodeURIComponent(currentIndex)}`),
+    fetch(`/api/stock-matching?ticker=${encodeURIComponent(srTicker)}&index=${encodeURIComponent(currentIndex)}`),
   ]);
   srAllRows = await stockRes.json();
   srMatchRows = await matchRes.json();
@@ -1093,7 +1153,7 @@ document.querySelectorAll('.tabBtn[data-tab]').forEach(btn => {
 });
 
 // ========================================================================
-// Pattern Stocks page
+// Stocks by Pattern page
 // ========================================================================
 let psPatternId = null;
 let psView = 'all';
@@ -1131,7 +1191,7 @@ async function psLoad(patternId, view) {
 
   let data;
   try {
-    const res = await fetch(`/api/pattern-matches?pattern_id=${patternId}`);
+    const res = await fetch(`/api/pattern-matches?pattern_id=${patternId}&index=${encodeURIComponent(currentIndex)}`);
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Server error (${res.status}): ${text.slice(0, 300)}`);
@@ -1243,11 +1303,11 @@ async function diLoadTab(tab) {
   const status = tab === 'patterns' ? document.getElementById('diStatus') : document.getElementById('diStockStatus');
   status.textContent = 'Loading...';
   if (tab === 'patterns') {
-    const res = await fetch(`/api/date-insights/patterns?month=${diMonth}`);
+    const res = await fetch(`/api/date-insights/patterns?month=${diMonth}&index=${encodeURIComponent(currentIndex)}`);
     diPatternRows = await res.json();
     diRenderPatterns();
   } else {
-    const res = await fetch(`/api/date-insights/stocks?month=${diMonth}`);
+    const res = await fetch(`/api/date-insights/stocks?month=${diMonth}&index=${encodeURIComponent(currentIndex)}`);
     diStockMatches = await res.json();
     diRenderStocks();
   }
@@ -1310,11 +1370,21 @@ document.getElementById('diViewToggle').addEventListener('click', () => {
 // ========================================================================
 // Dashboard: Market Insights & Month Highlights
 // ========================================================================
+function isoDateToMDY(iso) {
+  // "2026-10-28" -> "10/28/2026" -- matches the Rediscovery banner's date
+  // format. Deliberately NOT new Date(iso).toLocaleDateString(): parsing a
+  // bare "yyyy-mm-dd" string construts a UTC midnight Date, which
+  // toLocaleDateString() can then render as the PREVIOUS day in any
+  // timezone behind UTC (e.g. US Pacific). String-splitting avoids that.
+  const [y, m, d] = iso.split('-');
+  return `${m}/${d}/${y}`;
+}
+
 async function loadMarketInsights() {
   const res = await fetch('/api/dashboard/market-insights');
   const data = await res.json();
   document.getElementById('miAsOf').textContent = data.as_of
-    ? `Data as of ${data.as_of} (most recent completed trading session)` : '';
+    ? `Data as of ${isoDateToMDY(data.as_of)} (most recent completed trading session)` : '';
   document.getElementById('miCards').innerHTML = data.indices.map(idx => {
     const row = (label, val) => {
       const cls = val == null ? '' : (val >= 0 ? 'changePositive' : 'changeNegative');
@@ -1331,7 +1401,7 @@ const FULL_MONTH_NAMES = ['January','February','March','April','May','June','Jul
                           'September','October','November','December'];
 
 async function loadMonthHighlights() {
-  const res = await fetch('/api/dashboard/month-highlights');
+  const res = await fetch(`/api/dashboard/month-highlights?index=${encodeURIComponent(currentIndex)}`);
   const data = await res.json();
   document.getElementById('mhHeader').innerHTML =
     `${FULL_MONTH_NAMES[data.month - 1]}'s History <a href="#date-insights" style="font-size:0.55em;margin-left:0.5em">View Date Insights &rarr;</a>`;
@@ -1376,13 +1446,16 @@ async function loadMonthHighlights() {
 // Initial load
 // ========================================================================
 window.addEventListener('hashchange', handleHashChange);
-handleHashChange();
-loadIndices().then(loadPatterns);
-loadSettings();
-loadWatchlist();
-renderMonthButtons();
-loadMarketInsights();
-loadMonthHighlights();
+(async function init() {
+  await loadSettings();  // sets currentIndex as a side effect, before anything else fetches by index
+  await populateNavIndexSelector();
+  handleHashChange();
+  loadPatterns();
+  loadWatchlist();
+  renderMonthButtons();
+  loadMarketInsights();
+  loadMonthHighlights();
+})();
 </script>
 </body>
 </html>

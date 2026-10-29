@@ -12,7 +12,7 @@ from patternlab.db import connect
 from patternlab.reports import build_pattern_context, pattern_view, to_api_rows, stock_view, stock_to_api_rows, passes_direction_filter
 from patternlab.humanize import badge_text, FEATURE_INFO, ALL_FEATURES, conditions_html
 from patternlab.universe_fetch import get_universe, get_index_proxy, PROVIDERS
-from patternlab.jobs import start_job, get_status, discovery_status, STAGES
+from patternlab.jobs import start_job, get_status, discovery_status, price_update_status, STAGES
 from patternlab.watchlist import compute_watchlist, load_edges, compute_matching_table, matching_table_to_api_rows, compute_pattern_matches, compute_month_patterns_context, compute_month_stock_matches, compute_current_month_highlights
 from datetime import datetime
 from patternlab.market_insights import compute_market_insights
@@ -29,8 +29,6 @@ app.json.sort_keys = False
 # dropped (or replaced with something else, e.g. a download link) when a
 # hosted version is built.
 FIELD_METADATA = [
-    {"key": "index", "label": "Index", "type": "select", "options": None,
-     "help": "Which index's current constituents to use. The benchmark/proxy ticker is derived automatically from this."},
     {"key": "start_date", "label": "Start date", "type": "string",
      "help": "Earliest date to fetch price history from (YYYY-MM-DD)."},
     {"key": "use_stooq_fallback", "label": "Use Stooq fallback", "type": "boolean",
@@ -78,9 +76,29 @@ def api_indices():
     return jsonify(sorted(PROVIDERS))
 
 
+# The sidebar's index selector is the only place "index" is set now --
+# it's not a field in the Settings form or on Market Research anymore.
+# This updates just that one key in config.yaml (the index used both for
+# browsing results and as the target of the next pipeline run), leaving
+# every other setting untouched.
+@app.post("/api/set-index")
+def api_set_index():
+    index = (request.get_json() or {}).get("index")
+    if index not in PROVIDERS:
+        return jsonify({"error": f"Unknown index {index!r}"}), 400
+    cfg = read_raw_config()
+    cfg["index"] = index
+    try:
+        save_config(cfg)
+    except ConfigError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"status": "ok"})
+
+
 @app.get("/api/patterns")
 def api_patterns():
-    index = request.args.get("index", "sp500")
+    cfg0 = read_raw_config()
+    index = request.args.get("index", cfg0.get("index", "sp500"))
     if index not in PROVIDERS:
         return jsonify({"error": f"Unknown index {index!r}"}), 400
 
@@ -105,8 +123,6 @@ def api_get_config():
         errors = str(e)
     meta = [dict(f) for f in FIELD_METADATA]
     for f in meta:
-        if f["key"] == "index":
-            f["options"] = sorted(PROVIDERS)
         if f["key"] == "multithreading":
             from patternlab.parallel import resolved_worker_count
             on_count = resolved_worker_count({**cfg, "multithreading": True})
@@ -162,6 +178,7 @@ def api_jobs_start():
 def api_jobs_status():
     status = get_status()
     status["stages_meta"] = STAGES
+    status["price_update"] = price_update_status()
     status["discovery"] = discovery_status()
     return jsonify(status)
 

@@ -54,7 +54,6 @@ def compute_features(df: pd.DataFrame, index_close: pd.Series | None = None) -> 
 
     # average of the 20 bars BEFORE t, so a volume spike doesn't dilute its own ratio
     f["vol_rel_20"] = vol / vol.rolling(20, min_periods=15).mean().shift(1)
-    f["dow"] = df.index.dayofweek
     f["month"] = df.index.month
 
     if index_close is not None:

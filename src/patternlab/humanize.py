@@ -32,9 +32,8 @@ FEATURE_INFO = {
     "dist_52w_high": ("52-week High Distance", "Deep Pullback from 52-week High", "Near 52-week High"),
     "dist_52w_low": ("52-week Low Distance", "Near 52-week Low", "Far from 52-week Low"),
 }
-ALL_FEATURES = list(FEATURE_INFO.keys()) + ["dow", "month"]
+ALL_FEATURES = list(FEATURE_INFO.keys()) + ["month"]
 MONTH_NAMES = {i: calendar.month_name[i] for i in range(1, 13)}
-DOW_NAMES = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday"}
 
 PCT_FEATURES = {"ret_1", "ret_3", "ret_5", "ret_10", "ret_20", "macd_hist_pct", "atr_pct",
                 "gap_pct", "dist_52w_high", "dist_52w_low", "rel_strength_20"}
@@ -64,7 +63,7 @@ def format_edge_value(feature: str, value: float) -> str:
 
 
 def bucket_range_text(feature: str, bucket: int, edges: list[float] | None) -> str:
-    if feature in ("month", "dow") or not edges:
+    if feature == "month" or not edges:
         return ""
     n = len(edges)
     lo = edges[bucket - 1] if 0 < bucket <= n else None
@@ -81,8 +80,6 @@ def bucket_range_text(feature: str, bucket: int, edges: list[float] | None) -> s
 def describe_bucket(feature: str, bucket: int, edges: list[float] | None = None) -> str:
     if feature == "month":
         return MONTH_NAMES.get(int(bucket), f"Month {bucket}")
-    if feature == "dow":
-        return DOW_NAMES.get(int(bucket), f"Day {bucket}")
     name, low, high = FEATURE_INFO.get(feature, (feature, f"{feature} (bottom fifth)", f"{feature} (top fifth)"))
     if bucket == 0:
         text = low
@@ -223,7 +220,6 @@ FEATURE_ABBR = {
     "close_loc": "Close Loc", "streak": "Streak", "vol_rel_20": "Volume",
     "rel_strength_20": "Rel.Str", "dist_52w_high": "Pullback", "dist_52w_low": "52w Low",
 }
-DOW_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 
 
 def badge_text(conditions: list[dict]) -> str:
@@ -233,8 +229,6 @@ def badge_text(conditions: list[dict]) -> str:
         f, b = c["feature"], c["bucket"]
         if f == "month":
             parts.append(calendar.month_abbr[b] if 1 <= b <= 12 else f"M{b}")
-        elif f == "dow":
-            parts.append(DOW_ABBR[b] if 0 <= b < 5 else f"D{b}")
         else:
             parts.append(FEATURE_ABBR.get(f, f))
     return "/".join(parts)

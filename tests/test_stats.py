@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from patternlab.stats import thin_non_overlapping, cluster_bootstrap_pvalue, benjamini_hochberg, breadth
+from patternlab.stats import thin_non_overlapping, cluster_bootstrap_pvalue, benjamini_hochberg, bh_qvalues, breadth
 from patternlab.buckets import quantile_edges, apply_buckets, bucket_feature
 
 
@@ -56,13 +56,16 @@ def test_bootstrap_detects_a_real_shift():
     assert lo > 0
 
 
-def test_bootstrap_does_not_flag_pure_noise():
-    rng = np.random.default_rng(1)
-    n = 400
-    values = rng.normal(0.0, 0.01, n)
+def test_bootstrap_false_positive_rate_on_pure_noise():
+    """A single noise sample fails a 5% test about 1 time in 20 by design, so
+    check the false-positive RATE across many independent samples instead."""
     dates = np.repeat(np.arange(50), 8)
-    p, lo, hi = cluster_bootstrap_pvalue(values, dates, baseline=0.0, n_boot=500)
-    assert p > 0.05
+    trials = 60
+    hits = sum(
+        cluster_bootstrap_pvalue(np.random.default_rng(s).normal(0.0, 0.01, 400),
+                                 dates, baseline=0.0, n_boot=200)[0] < 0.05
+        for s in range(100, 100 + trials))
+    assert hits / trials < 0.15   # expected ~5%; generous bound keeps this stable
 
 
 def test_bh_controls_false_discoveries_on_pure_noise():

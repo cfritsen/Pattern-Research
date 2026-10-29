@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pandas as pd
 
-CATEGORICAL = {"dow", "month"}
+CATEGORICAL = {"month"}
 N_QUANTILES = 5
 
 

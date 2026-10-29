@@ -121,6 +121,14 @@ def ensure_dirs(cfg: dict) -> None:
         Path(cfg[key]).mkdir(parents=True, exist_ok=True)
 
 
+def index_data_dir(cfg: dict, kind: str) -> Path:
+    """Per-index cache folder: <data_dir>/<index>/<kind> (kind = raw, features,
+    outcomes). Every index owns its own price data, features and outcomes, so
+    a refresh, rebuild or index-relative feature on one index can never touch
+    another's files."""
+    return Path(cfg["data_dir"]) / cfg["index"] / kind
+
+
 def manifest_path(cfg: dict) -> Path:
     return Path(cfg["data_dir"]) / f"manifest_{cfg['index']}.json"
 

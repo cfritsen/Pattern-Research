@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 from pathlib import Path
+from patternlab.config import index_data_dir
 import numpy as np
 import pandas as pd
 from patternlab.buckets import CATEGORICAL
@@ -33,7 +34,7 @@ def load_latest_snapshot(cfg: dict) -> pd.DataFrame:
     back to the slow per-file path (one read per ticker) if the snapshot
     hasn't been generated yet (e.g. an older data/features/ directory from
     before this optimization existed) -- still correct, just slower."""
-    path = Path(cfg["data_dir"]) / "features" / "_latest_snapshot.parquet"
+    path = index_data_dir(cfg, "features") / "_latest_snapshot.parquet"
     if path.exists():
         return pd.read_parquet(path)
     return pd.DataFrame()
@@ -56,7 +57,7 @@ def get_snapshot(cfg: dict, uni: pd.DataFrame) -> pd.DataFrame:
     snap = load_latest_snapshot(cfg)
     if not snap.empty:
         return snap.loc[snap.index.intersection(uni["data_ticker"])]
-    feat_dir = Path(cfg["data_dir"]) / "features"
+    feat_dir = index_data_dir(cfg, "features")
     rows = {}
     for t in uni["data_ticker"]:
         r = _legacy_latest_feature_row(feat_dir, t)

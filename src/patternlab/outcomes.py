@@ -21,6 +21,24 @@ def split_cutoff(first: pd.Timestamp, last: pd.Timestamp, frac: float = 0.70) ->
     return pd.Timestamp(year=year, month=1, day=1)
 
 
+def universe_date_range(raw_dir, tickers) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Earliest and latest bar date across the given tickers' cached price
+    files. The discovery/confirm split is placed within THIS range, so each
+    index is split on its own data, not on another index's or an ETF's."""
+    from pathlib import Path
+    firsts, lasts = [], []
+    for t in tickers:
+        p = Path(raw_dir) / f"{t.replace('/', '_')}.parquet"
+        if p.exists():
+            ix = pd.read_parquet(p, columns=[]).index
+            if len(ix):
+                firsts.append(ix.min())
+                lasts.append(ix.max())
+    if not firsts:
+        raise ValueError(f"no cached price files found in {raw_dir}")
+    return min(firsts), max(lasts)
+
+
 def split_labels(index: pd.DatetimeIndex, cutoff: pd.Timestamp, horizons=HORIZONS) -> pd.DataFrame:
     """Per horizon: 0 = discovery, 1 = confirm, -1 = unusable.
     A discovery row is unusable if its outcome window ends on/after the cutoff

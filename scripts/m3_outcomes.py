@@ -3,24 +3,24 @@ from collections import Counter
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from patternlab.config import load_config, ensure_dirs, report_dir_for
-from patternlab.universe_fetch import get_universe, MARKET_REFERENCE
+from patternlab.config import load_config, ensure_dirs, report_dir_for, index_data_dir
+from patternlab.universe_fetch import get_universe
 from patternlab.universe import in_index_flag
 from patternlab.clean import load_clean
-from patternlab.outcomes import HORIZONS, compute_outcomes, split_labels, split_cutoff, hit_flags
+from patternlab.outcomes import HORIZONS, compute_outcomes, split_labels, split_cutoff, hit_flags, universe_date_range
 
 
 def main() -> None:
     cfg = load_config()
     ensure_dirs(cfg)
     uni = get_universe(cfg)
-    feat_dir = Path(cfg["data_dir"]) / "features"
-    out_dir = Path(cfg["data_dir"]) / "outcomes"
+    feat_dir = index_data_dir(cfg, "features")
+    out_dir = index_data_dir(cfg, "outcomes")
     out_dir.mkdir(parents=True, exist_ok=True)
     h0, move = cfg["horizon"], cfg["move_atr"]
 
-    idx_df, _ = load_clean(MARKET_REFERENCE, cfg)
-    cutoff = split_cutoff(idx_df.index[0], idx_df.index[-1], cfg["discovery_frac"])
+    first, last = universe_date_range(index_data_dir(cfg, "raw"), uni["data_ticker"])
+    cutoff = split_cutoff(first, last, cfg["discovery_frac"])
     print(f"Discovery: before {cutoff.date()}   Confirm: {cutoff.date()} onward")
 
     added_by_ticker = uni.set_index("data_ticker")["date_added"]
@@ -53,7 +53,7 @@ def main() -> None:
 
     market = panel[fwd_cols].where(panel["tradable"]).groupby(level=0).mean()
     market["n_stocks"] = panel["tradable"].groupby(level=0).sum()
-    market.to_parquet(out_dir / f"_market_mean_{cfg['index']}.parquet")
+    market.to_parquet(out_dir / f"_market_mean.parquet")
 
     rows = []
     for view, vmask in (("all", panel["tradable"]), ("flagged", panel["tradable"] & panel["in_index"])):

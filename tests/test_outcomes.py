@@ -60,3 +60,10 @@ def test_hit_flags():
     up, dn = hit_flags(fwd, atr, 1.0)
     assert up.tolist()[:3] == [1.0, 0.0, 0.0] and np.isnan(up.iloc[3])
     assert dn.tolist()[:3] == [0.0, 1.0, 0.0] and np.isnan(dn.iloc[3])
+
+def test_universe_date_range_spans_all_tickers(tmp_path):
+    from patternlab.outcomes import universe_date_range
+    for name, start, end in (("AAA", "2000-01-03", "2020-01-03"), ("BBB", "2005-06-01", "2026-09-17")):
+        pd.DataFrame({"adj_close": 1.0}, index=pd.bdate_range(start, end)).to_parquet(tmp_path / f"{name}.parquet")
+    first, last = universe_date_range(tmp_path, ["AAA", "BBB", "MISSING"])
+    assert first == pd.Timestamp("2000-01-03") and last == pd.Timestamp("2026-09-17")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+from patternlab.config import index_data_dir
 import numpy as np
 import pandas as pd
 from patternlab.buckets import bucket_feature
@@ -13,8 +14,8 @@ COST = 0.001
 
 def load_panel(cfg: dict, uni: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     h0 = cfg["horizon"]
-    feat_dir = Path(cfg["data_dir"]) / "features"
-    out_dir = Path(cfg["data_dir"]) / "outcomes"
+    feat_dir = index_data_dir(cfg, "features")
+    out_dir = index_data_dir(cfg, "outcomes")
     feature_cols = [c for c in pd.read_parquet(feat_dir / f"{uni['data_ticker'].iloc[0]}.parquet").columns
                     if c != "tradable"]
     added_by_ticker = uni.set_index("data_ticker")["date_added"]

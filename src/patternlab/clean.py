@@ -1,6 +1,7 @@
 from __future__ import annotations
 from datetime import date
 from pathlib import Path
+from patternlab.config import index_data_dir
 import pandas as pd
 
 ZERO_WINDOW = 60
@@ -36,6 +37,6 @@ def clean_prices(df: pd.DataFrame, today: date | None = None,
 
 
 def load_clean(ticker: str, cfg: dict) -> tuple[pd.DataFrame, dict]:
-    df = pd.read_parquet(Path(cfg["data_dir"]) / "raw" / f"{ticker}.parquet")
+    df = pd.read_parquet(index_data_dir(cfg, "raw") / f"{ticker}.parquet")
     start = (cfg.get("start_overrides") or {}).get(ticker)
     return clean_prices(df, start=start)

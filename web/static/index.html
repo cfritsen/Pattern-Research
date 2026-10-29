@@ -155,6 +155,7 @@
   .indexCard .idxLabel{font-weight:600;margin-bottom:6px;font-size:1em;color:var(--text);font-family:var(--font-display)}
   .changePositive{color:var(--positive)}
   .changeNegative{color:var(--negative)}
+  .regimeWarn{color:var(--accent)}
   .watchlistVertical{display:flex;flex-direction:column;gap:0.7em}
 </style>
 </head>
@@ -214,6 +215,10 @@
   <div id="page-market-research" class="page">
     <h1>Market Research</h1>
     <div class="note"><b>This report shows historical statistical patterns in price data. It is descriptive research, not investment advice, and not a recommendation to buy or sell any security.</b></div>
+
+    <div id="mrPatternBar" class="note" style="display:none">
+      Showing a single pattern. <button id="mrShowAll" type="button">Show all</button>
+    </div>
 
     <div class="controls">
       <button id="viewToggle" type="button">View: All Data</button>
@@ -361,6 +366,10 @@ function handleHashChange() {
     const { patternId, view } = parsePatternParamsFromHash();
     if (patternId !== null) psLoad(patternId, view);
   }
+  if (page === 'market-research') {
+    const { patternId, view } = parsePatternParamsFromHash();
+    applyMarketPattern(patternId, view);
+  }
 }
 
 // ========================================================================
@@ -401,6 +410,7 @@ async function onNavIndexChange(e) {
     return;
   }
   currentIndex = newIndex;
+  clearMarketPattern();
   loadPatterns();
   loadWatchlist();
   loadMonthHighlights();
@@ -418,6 +428,9 @@ document.getElementById('navIndexSelect').addEventListener('change', onNavIndexC
 // ========================================================================
 let rawRows = [];
 let currentView = 'all';
+let mrPatternId = null;        // when set, Market Research shows only this pattern
+let mrPendingResolve = false;  // pick the right All/Index-Only view once on arrival
+let patternsLoaded = false;
 let sortState = { col: null, ascending: true };
 let rangeFilters = {};
 let categoryFilters = {};
@@ -493,6 +506,7 @@ async function loadPatterns() {
   initFilters();
   document.getElementById('filterInput').value = '';
   status.textContent = '';
+  patternsLoaded = true;
   render();
 }
 
@@ -561,8 +575,55 @@ function renderBaseline() {
   box.textContent = `Baseline (${label}): ${fmtPct(row[`baseline_mean_${currentView}`])}`;
 }
 
+function setMarketView(view) {
+  currentView = view;
+  document.getElementById('viewToggle').textContent = `View: ${view === 'all' ? 'All Data' : 'Index-Only Data'}`;
+}
+
+// Arriving from a link (e.g. Stock Research -> "Market"): show just that
+// pattern, in the requested view, switching to the other view once if the
+// pattern only appears there.
+function applyMarketPattern(patternId, view) {
+  mrPatternId = patternId;
+  document.getElementById('mrPatternBar').style.display = patternId === null ? 'none' : '';
+  if (patternId !== null) {
+    setMarketView(view);
+    mrPendingResolve = true;
+  }
+  if (patternsLoaded) render();
+}
+
+function clearMarketPattern() {
+  mrPatternId = null;
+  mrPendingResolve = false;
+  document.getElementById('mrPatternBar').style.display = 'none';
+  if (window.location.hash.startsWith('#market-research')) {
+    history.replaceState(null, '', '#market-research');
+  }
+}
+
+function mrResolveView() {
+  mrPendingResolve = false;
+  const row = rawRows.find(r => r.pattern_id === mrPatternId);
+  if (!row || rowVisibleInView(row)) return;
+  const other = currentView === 'all' ? 'flagged' : 'all';
+  const prev = currentView;
+  currentView = other;
+  if (rowVisibleInView(row)) setMarketView(other); else currentView = prev;
+}
+
 function render() {
+  if (mrPatternId !== null && mrPendingResolve && rawRows.length) mrResolveView();
   let rows = rawRows.filter(rowVisibleInView);
+  if (mrPatternId !== null) {
+    // Single-pattern mode ignores the text/column filters and Top N so the
+    // requested row can never be hidden by a leftover filter.
+    rows = applySort(rows.filter(r => r.pattern_id === mrPatternId));
+    document.getElementById('rowCount').textContent = `${rows.length} pattern shown`;
+    renderBaseline();
+    renderTable(rows);
+    return;
+  }
   rows = applyTextFilter(rows);
   rows = applyColumnFilters(rows);
   rows = applySort(rows);
@@ -572,6 +633,10 @@ function render() {
   renderBaseline();
   renderTable(shown);
 }
+
+document.getElementById('mrShowAll').addEventListener('click', () => {
+  window.location.hash = 'market-research';
+});
 
 function closePopovers() {
   document.querySelectorAll('.popover').forEach(p => p.remove());
@@ -639,7 +704,9 @@ function renderTable(rows) {
   }
   html += '</tr></thead><tbody>';
   if (!rows.length) {
-    html += `<tr class="emptyMsg"><td colspan="${COLUMNS.length}">No patterns match the current filters.</td></tr>`;
+    html += `<tr class="emptyMsg"><td colspan="${COLUMNS.length}">${mrPatternId !== null
+      ? 'This pattern is not listed in Market Research for either data view.'
+      : 'No patterns match the current filters.'}</td></tr>`;
   } else {
     for (const row of rows) {
       html += '<tr>' + COLUMNS.map(c => `<td>${c.fmt ? c.fmt(c.get(row)) : c.get(row)}</td>`).join('') + '</tr>';
@@ -1028,7 +1095,7 @@ const SR_MATCH_COLUMNS = [
   { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
     fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1] },
   { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
-  { id: 'stocksLink', label: 'Stocks', html: true, get: r => `<a href="#pattern-stocks?pattern_id=${r.pattern_id}&view=${r.view}">View stocks \u2192</a>` },
+  { id: 'stocksLink', label: 'Stocks', html: true, get: r => `<div style="white-space:nowrap"><a href="#pattern-stocks?pattern_id=${r.pattern_id}&view=${r.view}">View stocks \u2192</a></div><div style="white-space:nowrap;margin-top:6px"><a href="#market-research?pattern_id=${r.pattern_id}&view=${r.view}">Market Pattern \u2192</a></div>` },
 ];
 
 const SR_STOCK_COLUMNS = [
@@ -1048,7 +1115,7 @@ const SR_STOCK_COLUMNS = [
   { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
     fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1] },
   { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
-  { id: 'stocksLink', label: 'Stocks', html: true, get: r => `<a href="#pattern-stocks?pattern_id=${r.pattern_id}&view=${srView}">View stocks \u2192</a>` },
+  { id: 'stocksLink', label: 'Stocks', html: true, get: r => `<div style="white-space:nowrap"><a href="#pattern-stocks?pattern_id=${r.pattern_id}&view=${srView}">View stocks \u2192</a></div><div style="white-space:nowrap;margin-top:6px"><a href="#market-research?pattern_id=${r.pattern_id}&view=${srView}">Market Pattern \u2192</a></div>` },
 ];
 
 async function srSearch(ticker) {
@@ -1392,9 +1459,26 @@ async function loadMarketInsights() {
     };
     return `<div class="indexCard">
       <div class="idxLabel">${idx.label}</div>
-      ${row('Day', idx.day)}${row('Week', idx.week)}${row('Month', idx.month)}
+      ${row('Day', idx.day)}${row('Month', idx.month)}${row('Year', idx.year)}
     </div>`;
-  }).join('');
+  }).join('') + vixCardHtml(data.vix);
+}
+
+// VIX card: descriptive regime label + two percentile readings. Calm/Normal
+// green, Elevated/Surging the brass accent, Stressed red.
+const VIX_TERM_CLASS = { Normal: 'changePositive', Inverted: 'changeNegative' };
+const VIX_REGIME_CLASS = { Calm: 'changePositive', Normal: 'changePositive', Elevated: 'regimeWarn', Surging: 'regimeWarn', Stressed: 'changeNegative' };
+function vixCardHtml(v) {
+  if (!v || v.level == null) return '';
+  const pct = x => (x == null ? '--' : `${Math.round(x * 100)}%`);
+  const row = (label, val, cls = '', tip = '') =>
+    `<div${tip ? ` title="${tip}"` : ''}>${label}: <span class="${cls}">${val}</span></div>`;
+  return `<div class="indexCard">
+    <div class="idxLabel">VIX &middot; ${v.level.toFixed(1)}</div>
+    ${row('Summary', v.regime, VIX_REGIME_CLASS[v.regime] || '', 'Calm: under 15 | Normal: 15-20 | Elevated: 20-30 | Surging: Elevated and well above its recent average | Stressed: 30+')}
+    ${row('Term Structure', v.term_structure || '--', VIX_TERM_CLASS[v.term_structure] || '', 'Normal: the 3-month VIX is above the 1-month VIX (the usual state). Inverted: the 1-month VIX is at or above the 3-month, meaning near-term worry exceeds longer-term worry.')}
+    ${row('52 Week Level', pct(v.week52_pct), '', 'Share of the last 252 trading days with a VIX close at or below the latest close.')}
+  </div>`;
 }
 
 const FULL_MONTH_NAMES = ['January','February','March','April','May','June','July','August',

@@ -50,15 +50,6 @@ INDEX_PROXIES = {
     # "dow": "DIA",         # example for when that loader is added
 }
 
-# Fixed reference used ONLY for the discovery/confirm date-split boundary
-# (M3). Deliberately NOT index-derived: pinning the split to one ticker,
-# regardless of which index is active, keeps data/outcomes/ files identical
-# (and therefore shareable) across indices -- otherwise the same historical
-# bar could land in "discovery" under one index and "confirm" under
-# another, depending only on which index happened to be configured.
-MARKET_REFERENCE = "SPY"
-
-
 def get_index_proxy(index: str) -> str:
     try:
         return INDEX_PROXIES[index]

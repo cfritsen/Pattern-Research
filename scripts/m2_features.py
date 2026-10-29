@@ -2,7 +2,7 @@ import json
 import time
 import pandas as pd
 from pathlib import Path
-from patternlab.config import load_config, ensure_dirs, manifest_path
+from patternlab.config import load_config, ensure_dirs, manifest_path, index_data_dir
 from patternlab.universe_fetch import get_universe, get_index_proxy
 from patternlab.clean import load_clean
 from patternlab.features import compute_features
@@ -12,7 +12,7 @@ def main() -> None:
     cfg = load_config()
     ensure_dirs(cfg)
     uni = get_universe(cfg)
-    out_dir = Path(cfg["data_dir"]) / "features"
+    out_dir = index_data_dir(cfg, "features")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     proxy = get_index_proxy(cfg["index"])

@@ -3,6 +3,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from patternlab.config import index_data_dir
 import pandas as pd
 
 COLS = ["open", "high", "low", "close", "adj_close", "volume"]
@@ -83,7 +84,7 @@ def get_prices(ticker: str, cfg: dict, refresh: bool = False, incremental: bool 
     refresh and incremental are mutually exclusive; refresh wins if both are
     somehow passed True.
     """
-    raw_dir = Path(cfg["data_dir"]) / "raw"
+    raw_dir = index_data_dir(cfg, "raw")
     raw_dir.mkdir(parents=True, exist_ok=True)
     path = raw_dir / f"{ticker.replace('/', '_')}.parquet"
     use_stooq = cfg.get("use_stooq_fallback", True)

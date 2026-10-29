@@ -12,7 +12,7 @@ def make_cached_df(dates):
 
 
 def test_incremental_with_no_cache_does_a_full_fetch(tmp_path, monkeypatch):
-    cfg = {"data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
+    cfg = {"index": "sp500", "data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
     calls = []
 
     def fake_fetch_from(ticker, start, use_stooq):
@@ -27,10 +27,10 @@ def test_incremental_with_no_cache_does_a_full_fetch(tmp_path, monkeypatch):
 
 
 def test_incremental_with_cache_only_fetches_new_bars(tmp_path, monkeypatch):
-    cfg = {"data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
+    cfg = {"index": "sp500", "data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
     cached = make_cached_df(pd.bdate_range("2020-01-01", periods=3))
-    path = tmp_path / "raw"
-    path.mkdir()
+    path = tmp_path / "sp500" / "raw"
+    path.mkdir(parents=True)
     cached.to_parquet(path / "TEST.parquet")
 
     calls = []
@@ -47,10 +47,10 @@ def test_incremental_with_cache_only_fetches_new_bars(tmp_path, monkeypatch):
 
 
 def test_incremental_with_no_new_bars_returns_cache_unchanged(tmp_path, monkeypatch):
-    cfg = {"data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
+    cfg = {"index": "sp500", "data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
     cached = make_cached_df(pd.bdate_range("2020-01-01", periods=3))
-    path = tmp_path / "raw"
-    path.mkdir()
+    path = tmp_path / "sp500" / "raw"
+    path.mkdir(parents=True)
     cached.to_parquet(path / "TEST.parquet")
 
     def fake_fetch_from(ticker, start, use_stooq):
@@ -63,10 +63,10 @@ def test_incremental_with_no_new_bars_returns_cache_unchanged(tmp_path, monkeypa
 
 
 def test_refresh_ignores_incremental_and_does_full_fetch(tmp_path, monkeypatch):
-    cfg = {"data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
+    cfg = {"index": "sp500", "data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
     cached = make_cached_df(pd.bdate_range("2020-01-01", periods=3))
-    path = tmp_path / "raw"
-    path.mkdir()
+    path = tmp_path / "sp500" / "raw"
+    path.mkdir(parents=True)
     cached.to_parquet(path / "TEST.parquet")
 
     calls = []
@@ -82,10 +82,10 @@ def test_refresh_ignores_incremental_and_does_full_fetch(tmp_path, monkeypatch):
 
 
 def test_incremental_skips_network_call_when_cache_already_current(tmp_path, monkeypatch):
-    cfg = {"data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
+    cfg = {"index": "sp500", "data_dir": str(tmp_path), "start_date": "2020-01-01", "use_stooq_fallback": False}
     cached = make_cached_df(pd.bdate_range("2024-06-01", periods=3))
-    path = tmp_path / "raw"
-    path.mkdir()
+    path = tmp_path / "sp500" / "raw"
+    path.mkdir(parents=True)
     cached.to_parquet(path / "TEST.parquet")
 
     # Pretend "now" is exactly the cache's last date -- so fetch_start

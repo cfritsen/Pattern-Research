@@ -3,101 +3,155 @@
 <head>
 <meta charset="utf-8">
 <title>Pattern Research</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  /*
+    Ledger & Brass -- dark ink ledger base, brass accent used sparingly.
+    Sharp corners, brass left-rule cards, thin horizontal table rules.
+    Fraunces (headings) / IBM Plex Sans (UI) / IBM Plex Mono (numbers).
+  */
+  :root{
+    color-scheme: dark;
+    --bg: #14171C;
+    --surface: #1C2028;
+    --elevated: #242933;
+    --border: #35393F;
+    --accent: #B08244;
+    --accent-hover: #C89A5C;
+    --text: #E8E6E1;
+    --text-muted: #9B9890;
+    --text-faint: #716E67;
+    --positive: #6FA17C;
+    --negative: #B5553D;
+    --font-display: "Fraunces", Georgia, serif;
+    --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", monospace;
+  }
   *, *::before, *::after { box-sizing: border-box; }
-  body{font-family:sans-serif;margin:0;background:#fafafa;display:flex;height:100vh;overflow:hidden}
+  html, body{ height:100%; }
+  body{font-family:var(--font-sans);margin:0;background:var(--bg);color:var(--text);display:flex;height:100vh;overflow:hidden}
+  a{color:var(--accent)}
+  a:hover{color:var(--accent-hover)}
+  input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
 
-  #sidebar{width:200px;flex-shrink:0;background:#1e2430;color:#cfd6e2;height:100vh;
-    overflow-y:auto;padding:1em 0}
-  #sidebar h1{font-size:1.05em;color:#fff;padding:0 1em;margin:0 0 1em}
-  .navItem{display:block;padding:0.6em 1em;cursor:pointer;color:#cfd6e2;text-decoration:none;
-    border-left:3px solid transparent}
-  .navItem:hover{background:#2a3242}
-  .navItem.active{background:#2a3242;border-left-color:#4e8cff;color:#fff}
+  h1,h2,h3{font-family:var(--font-display);font-weight:600;color:var(--text);margin:0}
+  h1{font-size:1.65em;margin-bottom:0.5em}
+  h2{font-size:1.15em;margin-bottom:0.5em}
 
-  #content{flex:1;overflow-y:auto;padding:1.5em 2em}
+  #sidebar{width:200px;flex-shrink:0;background:var(--surface);color:var(--text-muted);height:100vh;
+    overflow-y:auto;padding:1.25em 0;border-right:1px solid var(--border)}
+  #sidebar h1{font-size:1.2em;color:var(--text);padding:0 1.1em;margin:0 0 1.2em}
+  .navItem{display:block;padding:0.6em 1.1em;cursor:pointer;color:var(--text-muted);text-decoration:none;
+    border-left:3px solid transparent;font-size:0.92em}
+  .navItem:hover{background:var(--elevated);color:var(--text)}
+  .navItem.active{background:var(--elevated);border-left-color:var(--accent);color:var(--accent)}
+
+  #content{flex:1;overflow-y:auto;padding:1.75em 2.25em}
   .page{display:none}
   .page.active{display:block}
 
-  table{border-collapse:collapse;width:100%;font-size:0.8em}
-  td,th{border:1px solid #ccc;padding:5px 8px;text-align:right;vertical-align:top;position:relative}
-  th{background:#eee;white-space:nowrap}
-  td:first-child,th:first-child{text-align:left;min-width:150px}
+  table{border-collapse:collapse;width:100%;font-size:0.82em;font-family:var(--font-mono);background:var(--surface)}
+  td,th{border:none;border-bottom:1px solid var(--border);padding:0.55em 0.75em;text-align:right;vertical-align:top;position:relative}
+  th{background:var(--elevated);white-space:nowrap;font-family:var(--font-sans);font-weight:500;color:var(--text-muted)}
+  td:first-child,th:first-child{text-align:left;min-width:150px;font-family:var(--font-sans);color:var(--text)}
   td:nth-child(2),th:nth-child(2){text-align:left}
+  tbody tr:hover td{background:var(--elevated)}
   .sortLabel{cursor:pointer;user-select:none}
   .sortLabel:hover{text-decoration:underline}
-  th.sorted{background:#dce8f5}
-  .funnel{cursor:pointer;margin-left:6px;opacity:0.45;display:inline-block;vertical-align:middle}
-  .funnel.active{opacity:1}
+  th.sorted{background:var(--border);color:var(--text)}
+  .funnel{cursor:pointer;margin-left:6px;opacity:0.55;display:inline-block;vertical-align:middle;color:var(--text-muted)}
+  .funnel.active{opacity:1;color:var(--accent)}
   .funnel svg{width:11px;height:11px;display:block}
-  .popover{position:absolute;top:100%;left:0;background:#fff;border:1px solid #999;
-    border-radius:4px;padding:0.6em;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:10;
-    font-weight:normal;text-align:left;white-space:nowrap}
-  .popover input[type=number]{width:80px;font-size:0.85em}
+  .popover{position:absolute;top:100%;left:0;background:var(--elevated);border:1px solid var(--border);
+    border-radius:0;padding:0.6em;box-shadow:0 4px 14px rgba(0,0,0,0.45);z-index:10;
+    font-weight:normal;text-align:left;white-space:nowrap;font-family:var(--font-sans);color:var(--text)}
+  .popover input[type=number]{width:80px;font-size:0.85em;background:var(--surface);border:1px solid var(--border);color:var(--text)}
   .popover label{display:block;font-weight:normal;margin:2px 0}
-  .note{background:#fff3cd;padding:0.75em;margin:1em 0;border-radius:4px}
-  .cond{padding:2px 0;border-left:3px solid #ccc;padding-left:6px;margin-bottom:3px}
-  select,button,input{font-size:1em;padding:4px 8px;margin-right:0.5em}
-  #filterInput{width:240px}
-  #rowCount{color:#666;font-size:0.85em}
+  .note{background:var(--surface);border-left:3px solid var(--accent);padding:0.85em 1em;margin:1em 0;color:var(--text-muted)}
+  .note b{color:var(--text)}
+  .cond{padding:2px 0;border-left:3px solid var(--border);padding-left:6px;margin-bottom:3px}
+  select,button,input{font-size:0.92em;font-family:var(--font-sans);padding:5px 10px;margin-right:0.5em;
+    background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:0}
+  button{cursor:pointer}
+  button:hover{border-color:var(--accent-hover);color:var(--accent-hover)}
+  button:disabled{opacity:0.5;cursor:default}
+  input:focus,select:focus,button:focus{outline:1px solid var(--accent);outline-offset:1px}
+  #filterInput{width:260px}
+  #rowCount{color:var(--text-muted);font-size:0.85em;font-family:var(--font-sans)}
   #topN{width:70px}
-  .controls{display:flex;align-items:center;gap:0.5em;flex-wrap:wrap;margin:0.5em 0}
-  .emptyMsg td{text-align:left;color:#777;padding:1em 8px}
-  .placeholder{color:#888;font-style:italic;margin-top:1em}
+  .controls{display:flex;align-items:center;gap:0.5em;flex-wrap:wrap;margin:0.75em 0}
+  .emptyMsg td{text-align:left;color:var(--text-muted);padding:1em 0.75em}
+  .placeholder{color:var(--text-muted);font-style:italic;margin-top:1em;font-family:var(--font-sans)}
+  .textMuted{color:var(--text-muted);font-size:0.85em;font-family:var(--font-sans)}
+  .textFaint{color:var(--text-faint);font-size:0.78em;font-family:var(--font-sans)}
 
   .settingsForm{max-width:640px}
-  .field{margin-bottom:1em}
-  .field label.fieldLabel{display:block;font-weight:bold;margin-bottom:2px}
-  .field .help{color:#777;font-size:0.8em;margin-top:2px}
+  .field{margin-bottom:1.1em}
+  .field label.fieldLabel{display:block;font-weight:600;margin-bottom:3px;font-size:0.9em;color:var(--text)}
+  .field .help{color:var(--text-muted);font-size:0.8em;margin-top:3px}
   .field input[type=text], .field input[type=number], .field select{width:100%;max-width:300px}
   .field input[type=checkbox]{width:auto;margin:0 0.5em 0 0}
   .overrideRow{display:flex;gap:0.5em;margin-bottom:0.4em;align-items:center}
   .overrideRow input{width:140px}
-  .configErrors{background:#fde2e2;border:1px solid #e88;padding:0.75em;border-radius:4px;margin-bottom:1em}
-  .configErrors ul{margin:0.3em 0 0;padding-left:1.2em}
+  .configErrors{background:var(--surface);border-left:3px solid var(--negative);padding:0.85em 1em;margin-bottom:1em;color:var(--text)}
+  .configErrors ul{margin:0.4em 0 0;padding-left:1.2em;color:var(--text-muted)}
   .saveMsg{margin-left:0.5em;font-size:0.9em}
-  .saveMsg.ok{color:#1a7a1a}
-  .saveMsg.err{color:#a32}
+  .saveMsg.ok{color:var(--positive)}
+  .saveMsg.err{color:var(--negative)}
 
-  .watchlistGrid{display:flex;flex-wrap:wrap;gap:0.75em;margin-top:0.5em}
-  .watchlistCard{background:#fff;border:1px solid #ddd;border-radius:10px;
-    padding:0.75em 1em;min-width:160px;box-shadow:0 1px 3px rgba(0,0,0,0.08)}
-  .watchlistCard .ticker{font-weight:bold;font-size:1.05em}
-  .watchlistCard .badge{display:inline-block;background:#eef3fb;color:#2a5a9c;
-    border-radius:12px;padding:1px 8px;font-size:0.75em;margin:4px 0}
-  .watchlistCard .return{font-size:0.95em;margin-top:2px}
-  .watchlistCard .extra{color:#888;font-size:0.75em;margin-top:2px}
+  .watchlistGrid{display:flex;flex-wrap:wrap;gap:0.85em;margin-top:0.5em}
+  .watchlistCard{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);
+    border-radius:0;padding:0.85em 1.1em;min-width:160px}
+  .watchlistCard:hover{border-left-color:var(--accent-hover);background:var(--elevated)}
+  .watchlistCard .ticker{font-family:var(--font-mono);font-weight:600;font-size:1.05em;color:var(--text)}
+  .watchlistCard .badge{display:inline-block;background:var(--elevated);color:var(--accent);
+    border:1px solid var(--border);border-radius:0;padding:1px 8px;font-size:0.72em;margin:5px 0;
+    font-family:var(--font-sans);letter-spacing:0.02em}
+  .watchlistCard .return{font-size:0.95em;margin-top:3px;font-family:var(--font-mono);color:var(--text)}
+  .watchlistCard .extra{color:var(--text-faint);font-size:0.75em;margin-top:3px;font-family:var(--font-sans)}
 
-  .infoTip{position:relative;display:inline-block;margin-left:4px;cursor:help;color:#888;
-    font-size:0.75em;border:1px solid #999;border-radius:50%;width:13px;height:13px;
+  .badge{display:inline-block;font-size:0.72em;letter-spacing:0.02em;padding:2px 8px;border-radius:0;
+    font-family:var(--font-sans);border:1px solid var(--border);background:var(--elevated);color:var(--text-muted)}
+  .badge.confirmed{color:var(--accent);border-color:var(--accent);background:transparent}
+  .badge.marketwide{color:var(--text-muted);border-color:var(--border);background:var(--elevated)}
+
+  .infoTip{position:relative;display:inline-block;margin-left:4px;cursor:help;color:var(--text-muted);
+    font-size:0.75em;border:1px solid var(--border);border-radius:50%;width:13px;height:13px;
     text-align:center;line-height:12px;font-weight:normal}
   .infoTip .tipBox{display:none;position:absolute;top:140%;left:50%;transform:translateX(-50%);
-    background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:1.15em;
-    white-space:normal;width:200px;z-index:20;font-weight:normal;text-align:left}
+    background:var(--elevated);color:var(--text);border:1px solid var(--border);padding:6px 10px;
+    font-size:0.78rem;white-space:normal;width:200px;z-index:20;font-weight:normal;text-align:left;
+    font-family:var(--font-sans)}
   .infoTip:hover .tipBox{display:block}
-  #baselineDisplay{font-size:0.85em;color:#555;margin:0.3em 0 0.6em}
+  #baselineDisplay{font-size:0.85em;color:var(--text-muted);margin:0.4em 0 0.7em;font-family:var(--font-sans)}
 
-  .tabBtn{padding:6px 14px;border:1px solid #ccc;background:#eee;cursor:pointer;border-radius:4px 4px 0 0;margin-right:2px}
-  .tabBtn.active{background:#fff;border-bottom:1px solid #fff;font-weight:bold}
-  .tabPanel{display:none;border:1px solid #ccc;border-top:none;padding:1em}
+  .tabBtn{padding:7px 16px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);
+    cursor:pointer;border-radius:0;margin-right:2px;font-family:var(--font-sans);font-size:0.88em}
+  .tabBtn.active{background:var(--elevated);border-bottom-color:var(--elevated);color:var(--accent);font-weight:600}
+  .tabPanel{display:none;border:1px solid var(--border);border-top:none;padding:1.1em;background:var(--surface)}
   .tabPanel.active{display:block}
-  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ccc;
-    border-top-color:#4e8cff;border-radius:50%;animation:spin 0.8s linear infinite;
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);
+    border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;
     vertical-align:middle;margin-right:8px}
   @keyframes spin{to{transform:rotate(360deg)}}
-  .successMsg{color:#1a7a1a;font-weight:bold}
-  .monthBtn{padding:6px 10px;border:1px solid #ccc;background:#fff;cursor:pointer;border-radius:4px;margin:2px}
-  .monthBtn.active{background:#4e8cff;color:#fff;border-color:#4e8cff}
-  #dashboardRow{display:flex;gap:1.5em;align-items:flex-start}
+  .successMsg{color:var(--positive);font-weight:600;font-family:var(--font-sans)}
+  .monthBtn{padding:6px 12px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);
+    cursor:pointer;border-radius:0;margin:2px;font-family:var(--font-sans);font-size:0.85em}
+  .monthBtn.active{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+  #dashboardRow{display:flex;gap:1.75em;align-items:flex-start}
   #dashboardLeft{flex:3;min-width:0}
-  #dashboardRight{flex:0.75;min-width:220px;border-left:3px solid #ccc;padding:0 1em;
+  #dashboardRight{flex:0.75;min-width:220px;border-left:1px solid var(--border);padding:0 1.25em;
     height:calc(100vh - 3em);overflow-y:auto;position:sticky;top:0}
-  .sectionBox{margin-bottom:1.5em}
-  .indexCard{border:none;background:transparent;padding:0.5em 1.5em 0.5em 0;min-width:170px;font-size:1.05em;line-height:1.6}
-  .indexCard .idxLabel{font-weight:bold;margin-bottom:6px;font-size:1.15em}
-  .changePositive{color:#1a7a1a}
-  .changeNegative{color:#a32}
-  .watchlistVertical{display:flex;flex-direction:column;gap:0.6em}
+  .sectionBox{margin-bottom:1.75em}
+  #miCards{background:var(--surface);border-left:3px solid var(--accent);padding:0.65em 1.2em}
+  .indexCard{border:none;background:transparent;
+    padding:0.5em 1.2em 0.5em 0;min-width:170px;font-size:0.95em;line-height:1.65;font-family:var(--font-sans)}
+  .indexCard .idxLabel{font-weight:600;margin-bottom:6px;font-size:1em;color:var(--text);font-family:var(--font-display)}
+  .changePositive{color:var(--positive)}
+  .changeNegative{color:var(--negative)}
+  .watchlistVertical{display:flex;flex-direction:column;gap:0.7em}
 </style>
 </head>
 <body>
@@ -128,7 +182,7 @@
 
         <div class="sectionBox">
           <h2>Market Insights</h2>
-          <div id="miAsOf" style="font-size:0.85em;color:#666;margin-bottom:0.3em"></div>
+          <div id="miAsOf" class="textMuted"></div>
           <div id="miCards" style="display:flex;gap:2.5em;flex-wrap:wrap"></div>
         </div>
 
@@ -139,8 +193,8 @@
       </div>
 
       <div id="dashboardRight">
-        <h2><a href="#watchlist-full" style="color:inherit;text-decoration:none">Watchlist &rarr;</a></h2>
-        <div id="watchlistStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
+        <h2>Watchlist <a href="#watchlist-full" style="font-size:0.55em;margin-left:0.5em">View Full Watchlist &rarr;</a></h2>
+        <div id="watchlistStatus" class="textMuted"></div>
         <div id="watchlistCards" class="watchlistVertical"></div>
       </div>
     </div>
@@ -188,7 +242,7 @@
       <button id="srViewToggle" type="button">View: All Data</button>
       <span id="srStatus"></span>
     </div>
-    <div id="srBaselineDisplay" style="font-size:0.85em;color:#555;margin:0.3em 0"></div>
+    <div id="srBaselineDisplay" class="textMuted"></div>
 
     <div>
       <button class="tabBtn active" data-tab="matching">Matching Market Pattern</button>
@@ -221,7 +275,7 @@
       <button id="psSortDir" type="button">&#9660; Descending</button>
       <span id="psStatus"></span>
     </div>
-    <div id="psCount" style="font-size:0.85em;color:#666;margin-bottom:0.3em"></div>
+    <div id="psCount" class="textMuted"></div>
     <div id="psCards" class="watchlistGrid"></div>
   </div>
 
@@ -242,7 +296,7 @@
       <div id="diPatternTable"></div>
     </div>
     <div id="ditab-stocks" class="tabPanel">
-      <div id="diStockStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
+      <div id="diStockStatus" class="textMuted"></div>
       <div id="diStockCards" class="watchlistGrid"></div>
     </div>
   </div>
@@ -250,7 +304,7 @@
   <div id="page-watchlist-full" class="page">
     <h1>Watchlist</h1>
     <div class="note"><b>This report shows historical statistical patterns in price data. It is descriptive research, not investment advice, and not a recommendation to buy or sell any security.</b></div>
-    <div id="wlFullStatus" style="color:#666;font-size:0.85em;margin-bottom:0.5em"></div>
+    <div id="wlFullStatus" class="textMuted"></div>
     <div id="wlFullCards" class="watchlistGrid"></div>
   </div>
 
@@ -316,6 +370,10 @@ function getViewField(row, field) { return row[`${field}_${currentView}`]; }
 
 function fmtPct(v) { return (v === null || v === undefined) ? '--' : (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%'; }
 function fmtPct0(v) { return (v === null || v === undefined) ? '--' : (v * 100).toFixed(0) + '%'; }
+function fmtPctColored(v) {
+  if (v === null || v === undefined) return '--';
+  return `<span class="${v >= 0 ? 'changePositive' : 'changeNegative'}">${fmtPct(v)}</span>`;
+}
 function fmtInt(v) { return (v === null || v === undefined) ? '--' : v.toLocaleString(); }
 function fmtBestSingle(o) { return o ? `${fmtPct(o.effect)} (${o.feature} bucket ${o.bucket})` : 'N/A'; }
 function fmtConcentration(top3, exclMean, refMean) {
@@ -345,10 +403,10 @@ const COLUMNS = [
   { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0, filter: 'range' },
   { id: 'cases', label: 'Cases Found', numeric: true, get: r => currentView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt, filter: 'range' },
-  { id: 'ret5', label: '5-day Return', numeric: true, get: r => getViewField(r, 'mean_fwd_return'), fmt: fmtPct, filter: 'range' },
-  { id: 'edge', label: 'Edge', numeric: true, get: r => getViewField(r, 'effect'), fmt: fmtPct, filter: 'range' },
+  { id: 'ret5', label: '5-day Return', numeric: true, get: r => getViewField(r, 'mean_fwd_return'), fmt: fmtPctColored, filter: 'range' },
+  { id: 'edge', label: 'Edge', numeric: true, get: r => getViewField(r, 'effect'), fmt: fmtPctColored, filter: 'range' },
   { id: 'best', label: 'vs. Best Single Condition', html: true, get: r => getViewField(r, 'best_single_html') },
-  { id: 'fwd', label: 'Forward Test', numeric: true, get: r => getViewField(r, 'confirm_mean_fwd_return'), fmt: fmtPct, filter: 'range' },
+  { id: 'fwd', label: 'Forward Test', numeric: true, get: r => getViewField(r, 'confirm_mean_fwd_return'), fmt: fmtPctColored, filter: 'range' },
   { id: 'fdr', label: 'FDR', tip: 'False Discovery Rate', numeric: true, get: r => getViewField(r, 'q_value'), fmt: fmtPct0, filter: 'range' },
   { id: 'stocks', label: 'Stocks Agreed', numeric: true, get: r => getViewField(r, 'breadth_stocks'), fmt: fmtPct0, filter: 'range' },
   { id: 'years', label: 'Years Agreed', numeric: true, get: r => getViewField(r, 'breadth_years'), fmt: fmtPct0, filter: 'range' },
@@ -774,7 +832,7 @@ function renderJobProgress(status) {
     if (lastRenderedMode !== 'running') {
       box.innerHTML = `
         <div><span class="spinner"></span><b id="stageLabel"></b> (<span id="stageCount"></span>)</div>
-        <div style="color:#666;font-size:0.85em">Stage elapsed: <span id="stageElapsed"></span>
+        <div class="textMuted">Stage elapsed: <span id="stageElapsed"></span>
           &nbsp;|&nbsp; Total elapsed: <span id="totalElapsed"></span></div>`;
       lastRenderedMode = 'running';
     }
@@ -851,12 +909,11 @@ function buildWatchlistGroups(matches) {
 }
 
 function watchlistCardHtml(entry) {
-  const pct = (entry.top.historical_return >= 0 ? '+' : '') + (entry.top.historical_return * 100).toFixed(2) + '%';
   const sourceNote = entry.top.return_source === 'stock' ? 'stock history' : 'market-wide';
   return `<a class="watchlistCard" href="#stock-research?ticker=${entry.ticker}" style="text-decoration:none;color:inherit;display:block">
     <div class="ticker">${entry.ticker}</div>
     <div class="badge">${entry.top.badge}</div>
-    <div class="return">${pct} historical return <span style="color:#999;font-size:0.75em">(${sourceNote})</span></div>
+    <div class="return">${fmtPctColored(entry.top.historical_return)} historical return <span class="textFaint">(${sourceNote})</span></div>
     ${entry.extra > 0 ? `<div class="extra">+${entry.extra} more match${entry.extra === 1 ? '' : 'es'}</div>` : ''}
   </a>`;
 }
@@ -901,11 +958,11 @@ let srStockSort = { col: 'edge', ascending: false };
 const SR_MATCH_COLUMNS = [
   { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
   { id: 'confirm', label: 'Confirmation', html: true, get: r => r.confirmed
-      ? '<span class="badge" style="background:#d9f3dc;color:#1a7a1a;padding:2px 8px;border-radius:10px;font-size:0.8em">Stock-Confirmed</span>'
-      : '<span class="badge" style="background:#eee;color:#666;padding:2px 8px;border-radius:10px;font-size:0.8em">Market-Wide</span>' },
+      ? '<span class="badge confirmed">Stock-Confirmed</span>'
+      : '<span class="badge marketwide">Market-Wide</span>' },
   { id: 'cases', label: 'Cases', numeric: true, get: r => r.n, fmt: fmtInt },
-  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r.mean_fwd_return, fmt: fmtPct },
-  { id: 'edge', label: 'Edge', numeric: true, get: r => r.edge, fmt: fmtPct },
+  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r.mean_fwd_return, fmt: fmtPctColored },
+  { id: 'edge', label: 'Edge', numeric: true, get: r => r.edge, fmt: fmtPctColored },
   { id: 'hit', label: 'Hit Rate', numeric: true, get: r => r.hit_rate, fmt: fmtPct0 },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
   { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
@@ -917,17 +974,17 @@ const SR_MATCH_COLUMNS = [
 const SR_STOCK_COLUMNS = [
   { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
   { id: 'live', label: 'Live?', html: true,
-    get: r => r.is_live ? '<span class="badge" style="background:#d9f3dc;color:#1a7a1a;padding:2px 8px;border-radius:10px;font-size:0.8em">Live now</span>' : '' },
+    get: r => r.is_live ? '<span class="badge confirmed">Live now</span>' : '' },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
   { id: 'cases', label: 'Cases for this stock', numeric: true, get: r => srView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt },
-  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r[`mean_fwd_return_${srView}`], fmt: fmtPct },
-  { id: 'edge', label: 'Edge', numeric: true, get: r => r[`edge_${srView}`], fmt: fmtPct },
+  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r[`mean_fwd_return_${srView}`], fmt: fmtPctColored },
+  { id: 'edge', label: 'Edge', numeric: true, get: r => r[`edge_${srView}`], fmt: fmtPctColored },
   { id: 'best', label: 'vs. Best Single Condition', html: true, get: r => {
       const o = r[`best_single_${srView}`];
       return o ? `${fmtPct(o.effect)} (${o.feature} bucket ${o.bucket})` : 'N/A';
     } },
   { id: 'hit', label: 'Hit Rate', numeric: true, get: r => r[`hit_rate_${srView}`], fmt: fmtPct0 },
-  { id: 'vsall', label: 'vs. All-stock Average', numeric: true, get: r => r[`stock_effect_${srView}`], fmt: fmtPct },
+  { id: 'vsall', label: 'vs. All-stock Average', numeric: true, get: r => r[`stock_effect_${srView}`], fmt: fmtPctColored },
   { id: 'overlap', label: 'Correlation', category: true, get: r => overlapCategory(r.overlap_ratio),
     fmt: v => OVERLAP_OPTS.find(([k]) => k === v)[1] },
   { id: 'yearconc', label: 'Year Concentration', get: r => fmtConcentration(r.top3_year_share, r.mean_excl_top3, r.reference_mean) },
@@ -1098,7 +1155,7 @@ async function psLoad(patternId, view) {
   status.textContent = '';
   document.getElementById('psHeader').innerHTML =
     `<div>${data.pattern.conditions_html}</div>
-     <div style="font-size:0.85em;color:#555;margin-top:0.3em">
+     <div class="textMuted" style="margin-top:0.3em">
        Baseline (All Data): ${fmtPct(data.pattern.baseline_mean_all)} &nbsp;|&nbsp;
        Baseline (Index-Only): ${fmtPct(data.pattern.baseline_mean_flagged)}
      </div>`;
@@ -1114,15 +1171,15 @@ function psRender() {
   if (!rows.length) { container.innerHTML = '<p class="placeholder">No matching stocks.</p>'; return; }
   container.innerHTML = rows.map(r => {
     const confirmBadge = r.confirmed
-      ? '<span class="badge" style="background:#d9f3dc;color:#1a7a1a;padding:2px 8px;border-radius:10px;font-size:0.75em">Stock-Confirmed</span>'
-      : '<span class="badge" style="background:#eee;color:#666;padding:2px 8px;border-radius:10px;font-size:0.75em">Market-Wide</span>';
+      ? '<span class="badge confirmed">Stock-Confirmed</span>'
+      : '<span class="badge marketwide">Market-Wide</span>';
     return `<a class="watchlistCard" href="#stock-research?ticker=${r.ticker}" style="text-decoration:none;color:inherit;display:block">
       <div class="ticker">${r.ticker}</div>
       <div style="margin:4px 0">${confirmBadge}</div>
-      <div class="return">${fmtPct(r.mean_fwd_return)} 5-day return</div>
-      <div style="font-size:0.85em;color:#555">Edge: ${fmtPct(r.edge)}</div>
-      <div style="font-size:0.85em;color:#555">Hit Rate: ${fmtPct0(r.hit_rate)}</div>
-      <div style="font-size:0.85em;color:#555">Cases: ${fmtInt(r.n)}</div>
+      <div class="return">${fmtPctColored(r.mean_fwd_return)} 5-day return</div>
+      <div class="textMuted">Edge: ${fmtPctColored(r.edge)}</div>
+      <div class="textMuted">Hit Rate: ${fmtPct0(r.hit_rate)}</div>
+      <div class="textMuted">Cases: ${fmtInt(r.n)}</div>
     </a>`;
   }).join('');
 }
@@ -1159,8 +1216,8 @@ const DI_PATTERN_COLUMNS = [
   { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
   { id: 'cases', label: 'Cases Found', numeric: true, get: r => diView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt },
-  { id: 'ret5', label: '5-day Return', numeric: true, get: r => getDiViewField(r, 'mean_fwd_return'), fmt: fmtPct },
-  { id: 'edge', label: 'Edge', numeric: true, get: r => getDiViewField(r, 'effect'), fmt: fmtPct },
+  { id: 'ret5', label: '5-day Return', numeric: true, get: r => getDiViewField(r, 'mean_fwd_return'), fmt: fmtPctColored },
+  { id: 'edge', label: 'Edge', numeric: true, get: r => getDiViewField(r, 'effect'), fmt: fmtPctColored },
   { id: 'fdr', label: 'FDR', numeric: true, get: r => getDiViewField(r, 'q_value'), fmt: fmtPct0 },
   { id: 'stocks', label: 'Stocks Agreed', numeric: true, get: r => getDiViewField(r, 'breadth_stocks'), fmt: fmtPct0 },
   { id: 'years', label: 'Years Agreed', numeric: true, get: r => getDiViewField(r, 'breadth_years'), fmt: fmtPct0 },
@@ -1226,11 +1283,10 @@ function diRenderStocks() {
     const group = byTicker[t].slice().sort((a, b) => b.historical_return - a.historical_return);
     const top = group[0];
     const extra = group.length - 1;
-    const pct = (top.historical_return >= 0 ? '+' : '') + (top.historical_return * 100).toFixed(2) + '%';
     return `<a class="watchlistCard" href="#stock-research?ticker=${t}" style="text-decoration:none;color:inherit;display:block">
       <div class="ticker">${t}</div>
       <div class="badge">${top.badge}</div>
-      <div class="return">${pct} historical return</div>
+      <div class="return">${fmtPctColored(top.historical_return)} historical return</div>
       ${extra > 0 ? `<div class="extra">+${extra} more match${extra === 1 ? '' : 'es'}</div>` : ''}
     </a>`;
   }).join('');
@@ -1287,11 +1343,10 @@ async function loadMonthHighlights() {
   }
 
   const stockCards = data.stocks.map(s => {
-    const pct = (s.return >= 0 ? '+' : '') + (s.return * 100).toFixed(2) + '%';
     return `<a class="watchlistCard" href="#stock-research?ticker=${s.ticker}" style="text-decoration:none;color:inherit;display:block">
       <div class="ticker">${s.ticker}</div>
       <div class="badge">${s.badge}</div>
-      <div class="return">${pct} historical return</div>
+      <div class="return">${fmtPctColored(s.return)} historical return</div>
     </a>`;
   }).join('');
 
@@ -1306,7 +1361,7 @@ async function loadMonthHighlights() {
   }).join('');
 
   content.innerHTML = `<div style="display:flex;flex-wrap:wrap">
-    <div style="flex:0.7;min-width:280px">
+    <div style="flex:1;min-width:280px">
       <h3 style="font-size:0.95em;margin-bottom:0.4em">Top Stocks</h3>
       <div class="watchlistGrid">${stockCards}</div>
     </div>

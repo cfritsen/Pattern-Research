@@ -16,11 +16,22 @@ def load_panel(cfg: dict, uni: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     h0 = cfg["horizon"]
     feat_dir = index_data_dir(cfg, "features")
     out_dir = index_data_dir(cfg, "outcomes")
-    feature_cols = [c for c in pd.read_parquet(feat_dir / f"{uni['data_ticker'].iloc[0]}.parquet").columns
+    # A ticker with no feature/outcome file failed an earlier stage (M1 fetch,
+    # M2 or M3 -- e.g. Yahoo has no data for it). Skip it here instead of
+    # crashing the whole search; the earlier stage already logged the failure.
+    available = [t for t in uni["data_ticker"]
+                 if (feat_dir / f"{t}.parquet").exists() and (out_dir / f"{t}.parquet").exists()]
+    skipped = [t for t in uni["data_ticker"] if t not in set(available)]
+    if skipped:
+        print(f"Skipping {len(skipped)} ticker(s) with no feature/outcome data: {', '.join(skipped)}")
+    if not available:
+        raise RuntimeError("No feature/outcome files found for any ticker in this index; "
+                           "run Full Rediscovery from the start.")
+    feature_cols = [c for c in pd.read_parquet(feat_dir / f"{available[0]}.parquet").columns
                     if c != "tradable"]
     added_by_ticker = uni.set_index("data_ticker")["date_added"]
     frames = []
-    for t in uni["data_ticker"]:
+    for t in available:
         f = pd.read_parquet(feat_dir / f"{t}.parquet")
         o = pd.read_parquet(out_dir / f"{t}.parquet", columns=[f"fwd_ret_{h0}", f"split_{h0}",
                                                                 "up_hit", "down_hit", "tradable"])

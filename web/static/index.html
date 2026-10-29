@@ -382,13 +382,18 @@ let currentIndex = 'sp500';
 // Friendly display names for index provider keys. Add an entry here
 // whenever a new index loader is added to PROVIDERS (universe_fetch.py) --
 // any key missing from this map just falls back to showing its raw value.
+// Key order here is also the order shown in the selector.
 const INDEX_LABELS = {
-  sp500: 'S&P 500',
+  sp500: 'S&P 500 Large Cap',
+  sp400: 'S&P 400 Mid Cap',
+  sp600: 'S&P 600 Small Cap',
 };
 
 async function populateNavIndexSelector() {
   const res = await fetch('/api/indices');
-  const indices = await res.json();
+  const order = Object.keys(INDEX_LABELS);
+  const rank = i => order.includes(i) ? order.indexOf(i) : order.length;
+  const indices = (await res.json()).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   const sel = document.getElementById('navIndexSelect');
   sel.innerHTML = indices.map(i => `<option value="${i}" ${i === currentIndex ? 'selected' : ''}>${INDEX_LABELS[i] || i}</option>`).join('');
 }

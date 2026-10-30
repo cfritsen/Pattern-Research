@@ -84,8 +84,6 @@ INDEX_PROXIES = {
     "sp500": "SPY",
     "sp400": "MDY",         # SPDR S&P MidCap 400 ETF (history back to 1995)
     "sp600": "IJR",         # iShares Core S&P Small-Cap ETF (history back to 2000)
-    # "nasdaq100": "QQQ",   # example for when that loader is added
-    # "dow": "DIA",         # example for when that loader is added
 }
 
 def get_index_proxy(index: str) -> str:

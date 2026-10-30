@@ -86,3 +86,47 @@ def test_zero_volume_is_missing_and_not_tradable():
 def test_close_location_is_between_zero_and_one():
     df, _ = synth()
     assert compute_features(df)["close_loc"].dropna().between(0, 1).all()
+
+
+def test_new_indicators_are_features_and_market_features_follow_the_index_proxy():
+    df, idxc = synth()
+    f = compute_features(df, idxc)
+    for col in ["adx_14", "vol_ratio_5_20", "vol_state_1y", "mom_12_1", "days_since_52w_low",
+                "cmf_20", "mkt_dist_sma200"]:
+        assert col in f.columns, col
+    assert "vix_pct_252" not in f.columns                       # no VIX supplied
+    expected = (idxc / idxc.rolling(200).mean() - 1)
+    pd.testing.assert_series_equal(f["mkt_dist_sma200"], expected, check_names=False)
+
+
+def test_market_level_features_are_identical_across_stocks_and_ignore_the_stock():
+    from patternlab.indicators import market_features
+    df1, idxc = synth(seed=0)
+    df2, _ = synth(seed=7)
+    vix = pd.Series(15 + np.sin(np.arange(len(idxc)) / 15) * 4, index=idxc.index)
+    mk = market_features(idxc, vix)
+    a, b = compute_features(df1, idxc, mk), compute_features(df2, idxc, mk)
+    for col in ("mkt_dist_sma200", "vix_pct_252"):
+        pd.testing.assert_series_equal(a[col], b[col])
+
+
+def test_vix_feature_does_not_look_ahead():
+    from patternlab.indicators import market_features
+    df, idxc = synth()
+    vix = pd.Series(15 + np.sin(np.arange(len(idxc)) / 15) * 4, index=idxc.index)
+    k = 450
+    full = compute_features(df, idxc, market_features(idxc, vix))
+    cut = compute_features(df.iloc[:k + 1], idxc.iloc[:k + 1], market_features(idxc.iloc[:k + 1], vix.iloc[:k + 1]))
+    pd.testing.assert_frame_equal(full.iloc[:k + 1], cut, rtol=1e-9, atol=1e-12)
+
+
+def test_every_computed_feature_has_labels_and_abbreviations():
+    from patternlab.humanize import ALL_FEATURES, FEATURE_ABBR, FEATURE_INFO
+    from patternlab.indicators import market_features
+    df, idxc = synth()
+    vix = pd.Series(15.0, index=idxc.index)
+    cols = [c for c in compute_features(df, idxc, market_features(idxc, vix)).columns if c != "tradable"]
+    for c in cols:
+        assert c in ALL_FEATURES, c
+        if c != "month":
+            assert c in FEATURE_INFO and c in FEATURE_ABBR, c

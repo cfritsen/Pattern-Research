@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from patternlab.config import load_config, ensure_dirs, manifest_path
 from patternlab.universe_fetch import get_universe
-from patternlab.buckets import CATEGORICAL
+from patternlab.buckets import CATEGORICAL, drop_date_level_pairs
 from patternlab.search import load_panel, build_buckets
 from patternlab.correlation import spearman_matrix, prune_pairs
 from patternlab.stats import benjamini_hochberg, bh_qvalues
@@ -47,6 +47,10 @@ def main() -> None:
             if pair not in pruned_set:
                 pairs_to_test.append(pair)
     pairs_to_test = sorted({tuple(sorted(p)) for p in pairs_to_test})
+    n_before = len(pairs_to_test)
+    pairs_to_test = drop_date_level_pairs(pairs_to_test)    # both date-level: guaranteed null (buckets.py)
+    if n_before != len(pairs_to_test):
+        print(f"Skipped {n_before - len(pairs_to_test)} date-level x date-level pair(s)")
 
     manifest = json.loads(manifest_path(cfg).read_text())
     conn = connect(cfg)

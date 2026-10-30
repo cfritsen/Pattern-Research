@@ -31,15 +31,25 @@ FEATURE_INFO = {
     "rel_strength_20": ("20-day vs. Market", "Underperforming Market", "Outperforming Market"),
     "dist_52w_high": ("52-week High Distance", "Deep Pullback from 52-week High", "Near 52-week High"),
     "dist_52w_low": ("52-week Low Distance", "Near 52-week Low", "Far from 52-week Low"),
+    "adx_14": ("Trend Strength (ADX)", "Weak Trend", "Strong Trend"),
+    "vol_ratio_5_20": ("Volatility Trend", "Volatility Falling", "Volatility Rising"),
+    "vol_state_1y": ("Volatility vs. Own History", "Quiet vs. Own History", "Turbulent vs. Own History"),
+    "mom_12_1": ("12-1 Month Momentum", "Weak 12-1 Month Momentum", "Strong 12-1 Month Momentum"),
+    "days_since_52w_low": ("Days Since 52-week Low", "Recent 52-week Low", "Long Since 52-week Low"),
+    "cmf_20": ("Money Flow (20-day)", "Heavy Selling Pressure", "Heavy Buying Pressure"),
+    "mkt_dist_sma200": ("Market vs. 200-day Avg", "Market Below 200-day Avg", "Market Above 200-day Avg"),
+    "vix_pct_252": ("VIX Level (1-year Rank)", "VIX Low for the Year", "VIX High for the Year"),
 }
 ALL_FEATURES = list(FEATURE_INFO.keys()) + ["month"]
 MONTH_NAMES = {i: calendar.month_name[i] for i in range(1, 13)}
 
 PCT_FEATURES = {"ret_1", "ret_3", "ret_5", "ret_10", "ret_20", "macd_hist_pct", "atr_pct",
-                "gap_pct", "dist_52w_high", "dist_52w_low", "rel_strength_20"}
+                "gap_pct", "dist_52w_high", "dist_52w_low", "rel_strength_20", "mom_12_1", "mkt_dist_sma200"}
 ATR_FEATURES = {"dist_sma20_atr", "dist_sma50_atr", "dist_sma200_atr", "range_comp_10"}
-POINTS_FEATURES = {"rsi14"}
-RATIO_FEATURES = {"body_ratio", "upper_wick_ratio", "lower_wick_ratio", "close_loc"}
+POINTS_FEATURES = {"rsi14", "adx_14"}
+RATIO_FEATURES = {"body_ratio", "upper_wick_ratio", "lower_wick_ratio", "close_loc", "vix_pct_252"}
+TIMES_FEATURES = {"vol_ratio_5_20", "vol_state_1y"}
+COUNT_DAYS_FEATURES = {"days_since_52w_low"}
 DAYS_FEATURES = {"streak"}
 MULT_FEATURES = {"vol_rel_20"}
 
@@ -59,6 +69,10 @@ def format_edge_value(feature: str, value: float) -> str:
         return f"{value:+.0f} days"
     if feature in MULT_FEATURES:
         return f"{value:.1f}x normal"
+    if feature in TIMES_FEATURES:
+        return f"{value:.2f}x"
+    if feature in COUNT_DAYS_FEATURES:
+        return f"{value:.0f} days"
     return f"{value:.3g}"
 
 
@@ -219,6 +233,8 @@ FEATURE_ABBR = {
     "gap_pct": "Gap", "body_ratio": "Body", "upper_wick_ratio": "U.Wick", "lower_wick_ratio": "L.Wick",
     "close_loc": "Close Loc", "streak": "Streak", "vol_rel_20": "Volume",
     "rel_strength_20": "Rel.Str", "dist_52w_high": "Pullback", "dist_52w_low": "52w Low",
+    "adx_14": "ADX", "vol_ratio_5_20": "Vol Trend", "vol_state_1y": "Vol State", "mom_12_1": "Momentum",
+    "days_since_52w_low": "Days Low", "cmf_20": "Money Flow", "mkt_dist_sma200": "Mkt Trend", "vix_pct_252": "VIX",
 }
 
 

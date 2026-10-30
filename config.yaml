@@ -12,6 +12,12 @@ cost: 0.001
 corr_prune_threshold: 0.7
 test_all_buckets: false
 multithreading: true
-disabled_features: []
+disabled_features:
+- ret_1
+- ret_20
+- dist_sma20_atr
+- dist_sma200_atr
+- rsi14
+- body_ratio
 start_overrides:
   JCI: '2007-07-02'

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from patternlab.config import load_config, ensure_dirs, manifest_path
 from patternlab.universe_fetch import get_universe
-from patternlab.buckets import CATEGORICAL
+from patternlab.buckets import CATEGORICAL, MARKET_LEVEL
 from patternlab.search import load_panel, build_buckets
 from patternlab.stats import benjamini_hochberg
 from patternlab.db import connect, insert_run, get_or_create_pattern, insert_result
@@ -43,6 +43,8 @@ def main() -> None:
     tasks = []
     for view in ("all", "flagged"):
         for col in buckets.columns:
+            if col in MARKET_LEVEL:      # same value for every stock per date: cannot pass alone (see buckets.py)
+                continue
             n_labels = 5 if col not in CATEGORICAL else int(buckets[col].max() + 1)
             for label in range(n_labels):
                 tasks.append((view, col, label))

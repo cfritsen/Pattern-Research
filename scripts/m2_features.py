@@ -6,6 +6,7 @@ from patternlab.config import load_config, ensure_dirs, manifest_path, index_dat
 from patternlab.universe_fetch import get_universe, get_index_proxy
 from patternlab.clean import load_clean
 from patternlab.features import compute_features
+from patternlab.indicators import load_vix_close, market_features
 
 
 def main() -> None:
@@ -18,12 +19,14 @@ def main() -> None:
     proxy = get_index_proxy(cfg["index"])
     idx_df, _ = load_clean(proxy, cfg)
     idx_close = idx_df["adj_close"]
+    # Date-level features (same value for every stock on a date) are computed once, not per ticker.
+    market = market_features(idx_close, load_vix_close(cfg))
 
     t0, done, failed, total_rows, complete_rows = time.time(), 0, [], 0, 0
     for t in uni["data_ticker"]:
         try:
             df, _ = load_clean(t, cfg)
-            f = compute_features(df, idx_close)
+            f = compute_features(df, idx_close, market)
             f32 = f.select_dtypes("float64").columns
             f[f32] = f[f32].astype("float32")
             f.to_parquet(out_dir / f"{t}.parquet")

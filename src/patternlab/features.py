@@ -1,12 +1,9 @@
 from __future__ import annotations
 import numpy as np
 import pandas as pd
+from patternlab.indicators import PER_TICKER as NEW_INDICATORS, market_features, wilder as _wilder
 
 ATR_N = 14
-
-
-def _wilder(s: pd.Series, n: int) -> pd.Series:
-    return s.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
 
 
 def _rsi(c: pd.Series, n: int = 14) -> pd.Series:
@@ -23,9 +20,12 @@ def _streak(c: pd.Series) -> pd.Series:
     return sgn * (sgn.groupby(grp).cumcount() + 1)
 
 
-def compute_features(df: pd.DataFrame, index_close: pd.Series | None = None) -> pd.DataFrame:
+def compute_features(df: pd.DataFrame, index_close: pd.Series | None = None,
+                     market: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every value at bar t uses only bars up to and including t.
-    df needs adj_open/adj_high/adj_low/adj_close and volume (raw)."""
+    df needs adj_open/adj_high/adj_low/adj_close and volume (raw).
+    market: date-level features computed once per index (indicators.market_features);
+    if omitted they are derived from index_close alone (no VIX)."""
     o, h, l, c = df["adj_open"], df["adj_high"], df["adj_low"], df["adj_close"]
     vol = df["volume"].where(df["volume"] > 0)          # zero volume -> missing
     pc = c.shift(1)
@@ -63,5 +63,13 @@ def compute_features(df: pd.DataFrame, index_close: pd.Series | None = None) -> 
     # also serves as "drawdown from high" (same quantity over 252 bars)
     f["dist_52w_high"] = c / c.rolling(252).max() - 1
     f["dist_52w_low"] = c / c.rolling(252).min() - 1
+
+    for name, fn in NEW_INDICATORS.items():
+        f[name] = fn(df)
+    if market is None and index_close is not None:
+        market = market_features(index_close, None)
+    if market is not None:
+        for col in market.columns:
+            f[col] = market[col].reindex(df.index)
     f["tradable"] = df["volume"] > 0
     return f

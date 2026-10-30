@@ -25,3 +25,10 @@ def test_validate_rejects_short_table():
     df = pd.DataFrame({"ticker": [f"T{i}" for i in range(50)]})
     with pytest.raises(RuntimeError):
         validate_snapshot(df)
+
+
+def test_date_level_pairs_are_dropped_but_regime_x_stock_pairs_stay():
+    from patternlab.buckets import drop_date_level_pairs
+    pairs = [("mkt_dist_sma200", "vix_pct_252"), ("month", "mkt_dist_sma200"), ("month", "vix_pct_252"),
+             ("mkt_dist_sma200", "rsi14"), ("month", "rsi14"), ("atr_pct", "rsi14")]
+    assert drop_date_level_pairs(pairs) == pairs[3:]

@@ -129,6 +129,13 @@ def index_data_dir(cfg: dict, kind: str) -> Path:
     return Path(cfg["data_dir"]) / cfg["index"] / kind
 
 
+def market_data_dir(cfg: dict) -> Path:
+    """Shared folder for the market-wide tickers (Market Insights' SPY, DIA, QQQ,
+    IWM, ^VIX, ^VIX3M). One copy, so every index shows the same values. Stocks
+    and each index's own proxy stay in their per-index folders."""
+    return Path(cfg["data_dir"]) / "market" / "raw"
+
+
 def manifest_path(cfg: dict) -> Path:
     return Path(cfg["data_dir"]) / f"manifest_{cfg['index']}.json"
 

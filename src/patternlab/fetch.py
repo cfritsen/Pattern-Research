@@ -3,15 +3,17 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from patternlab.config import index_data_dir
+from patternlab.config import index_data_dir, market_data_dir
+from patternlab.session import last_completed_session_date
 import pandas as pd
 
 COLS = ["open", "high", "low", "close", "adj_close", "volume"]
 
 
-def _today() -> pd.Timestamp:
-    """Separated out so tests can monkeypatch 'now' without touching real time."""
-    return pd.Timestamp.now().normalize()
+def _last_completed() -> pd.Timestamp:
+    """Date of the latest completed session (see session.py). Separated out so
+    tests can monkeypatch it without touching real time."""
+    return pd.Timestamp(last_completed_session_date())
 
 
 def _from_yfinance(ticker: str, start: str) -> pd.DataFrame:
@@ -63,7 +65,8 @@ def _fetch_from(ticker: str, start: str, use_stooq_fallback: bool) -> pd.DataFra
     raise RuntimeError(f"{ticker}: " + " | ".join(errors))
 
 
-def get_prices(ticker: str, cfg: dict, refresh: bool = False, incremental: bool = False) -> tuple[pd.DataFrame, dict]:
+def get_prices(ticker: str, cfg: dict, refresh: bool = False, incremental: bool = False,
+               shared: bool = False) -> tuple[pd.DataFrame, dict]:
     """Return (dataframe, meta).
 
     refresh=False, incremental=False (default): use the parquet cache as-is
@@ -77,14 +80,19 @@ def get_prices(ticker: str, cfg: dict, refresh: bool = False, incremental: bool 
         cached bars' adj_close slightly stale until the next refresh=True
         run. This is "Fetch New" -- bounded, accepted drift, per the spec.
         If no cache exists yet, behaves exactly like a full fetch. If the
-        cache is already current (its last bar is today or later), no
-        network call is made at all -- asking yfinance for a future start
-        date doesn't error locally, it round-trips to the server first and
-        THEN errors, which is slow and noisy across hundreds of tickers.
+        cache is already current (its last bar is the latest completed
+        session), no network call is made at all -- asking yfinance for a
+        future start date doesn't error locally, it round-trips to the
+        server first and THEN errors, which is slow and noisy across
+        hundreds of tickers.
+    Incomplete sessions are never recorded: any bar newer than the latest
+    completed session (4:15 PM ET, see session.py) is dropped before saving.
+    shared=True reads/writes the shared market-data folder (Market Insights'
+    tickers and VIX) instead of the index's own raw folder.
     refresh and incremental are mutually exclusive; refresh wins if both are
     somehow passed True.
     """
-    raw_dir = index_data_dir(cfg, "raw")
+    raw_dir = market_data_dir(cfg) if shared else index_data_dir(cfg, "raw")
     raw_dir.mkdir(parents=True, exist_ok=True)
     path = raw_dir / f"{ticker.replace('/', '_')}.parquet"
     use_stooq = cfg.get("use_stooq_fallback", True)
@@ -93,13 +101,25 @@ def get_prices(ticker: str, cfg: dict, refresh: bool = False, incremental: bool 
         df = pd.read_parquet(path)
         return df, _meta(df, fetched_at=None)
 
-    if path.exists() and incremental and not refresh:
-        cached = pd.read_parquet(path)
+    cutoff = _last_completed()
+    cached = pd.read_parquet(path) if (path.exists() and incremental and not refresh) else None
+    if cached is not None:
+        complete = cached.loc[cached.index <= cutoff]
+        if len(complete) < len(cached):
+            # A bar from a session that had not finished (saved by an older
+            # version, or before the close): drop it so it gets refetched.
+            cached = complete
+            if not cached.empty:
+                cached.to_parquet(path)
+        if cached.empty:
+            cached = None
+
+    if cached is not None:
         last_cached_date = cached.index[-1]
         fetch_start_ts = last_cached_date + pd.Timedelta(days=1)
 
-        if fetch_start_ts > _today():
-            # Cache already includes a bar dated today or later -- nothing
+        if fetch_start_ts > cutoff:
+            # Cache already holds the latest completed session -- nothing
             # could possibly be newer yet. Skip the network call entirely.
             return cached, _meta(cached, fetched_at=None)
 
@@ -111,6 +131,7 @@ def get_prices(ticker: str, cfg: dict, refresh: bool = False, incremental: bool 
             # no-op rather than failing the whole run -- the next scheduled
             # fetch will try again.
             return cached, _meta(cached, fetched_at=None)
+        new_df = new_df.loc[new_df.index <= cutoff]
         if new_df.empty:
             return cached, _meta(cached, fetched_at=None)
         combined = pd.concat([cached, new_df])
@@ -120,6 +141,7 @@ def get_prices(ticker: str, cfg: dict, refresh: bool = False, incremental: bool 
 
     # refresh=True, or no cache exists at all: full fetch from cfg's start_date.
     df = _fetch_from(ticker, cfg["start_date"], use_stooq)
+    df = df.loc[df.index <= cutoff]
     df.to_parquet(path)
     return df, _meta(df, fetched_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 

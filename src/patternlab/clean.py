@@ -2,22 +2,25 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 from patternlab.config import index_data_dir
+from patternlab.session import last_completed_session_date
 import pandas as pd
 
 ZERO_WINDOW = 60
 ZERO_FRAC = 0.50
 
 
-def clean_prices(df: pd.DataFrame, today: date | None = None,
+def clean_prices(df: pd.DataFrame, last_complete: date | None = None,
                  start: str | None = None) -> tuple[pd.DataFrame, dict]:
-    """Rules: (1) drop bars dated today or later (incomplete sessions),
+    """Rules: (1) drop bars from sessions that haven't completed (anything
+    after the latest completed session, 4:15 PM Eastern -- see session.py;
+    `last_complete` overrides it for tests),
     (2) apply a manual start date if given, (3) trim leading history where
     >=20% of a 60-bar window has zero volume (wrong-listing prehistory)."""
     notes = {"rows_in": len(df), "dropped_today": 0,
              "trimmed_prehistory": 0, "start_override": start}
-    today = today or date.today()
+    last_complete = last_complete or last_completed_session_date()
 
-    keep = df.index < pd.Timestamp(today)
+    keep = df.index <= pd.Timestamp(last_complete)
     notes["dropped_today"] = int((~keep).sum())
     df = df.loc[keep]
 

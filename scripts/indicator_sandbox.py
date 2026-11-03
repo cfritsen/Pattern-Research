@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from patternlab.candidates import (compute_candidates, market_candidates, cross_sectional_rank)
 from patternlab.clean import load_clean
-from patternlab.config import load_config, index_data_dir, report_dir_for
+from patternlab.config import load_config, index_data_dir, market_data_dir, report_dir_for
 from patternlab.redundancy import (R2_REDUNDANT, candidate_report, explained_by_others, feature_pairs, trim_order)
 from patternlab.universe_fetch import get_universe, get_index_proxy
 
@@ -39,12 +39,12 @@ NON_FEATURES = {"tradable", "month"}          # month is categorical; tradable i
 
 def load_vix(cfg: dict):
     """Cached ^VIX closes if present; otherwise one fetch. None if unavailable."""
-    path = index_data_dir(cfg, "raw") / "^VIX.parquet"
+    path = market_data_dir(cfg) / "^VIX.parquet"
     try:
         if path.exists():
             return pd.read_parquet(path)["adj_close"].dropna()
         from patternlab.fetch import get_prices
-        return get_prices("^VIX", cfg, incremental=True)[0]["adj_close"].dropna()
+        return get_prices("^VIX", cfg, incremental=True, shared=True)[0]["adj_close"].dropna()
     except Exception as e:                                                # noqa: BLE001
         print(f"  (VIX unavailable, skipping vix_pct_252: {e})")
         return None

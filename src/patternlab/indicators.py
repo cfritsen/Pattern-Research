@@ -88,14 +88,14 @@ def market_features(proxy_close: pd.Series, vix_close: pd.Series | None) -> pd.D
 
 
 def load_vix_close(cfg: dict) -> pd.Series | None:
-    """VIX closes: refreshes the cached ^VIX file if it can, falls back to the cache, and
+    """VIX closes (shared market-data folder): refreshes the cached ^VIX file if it can, falls back to the cache, and
     returns None (with a printed note) if neither works."""
-    from patternlab.config import index_data_dir
+    from patternlab.config import market_data_dir
     try:
         from patternlab.fetch import get_prices
-        return get_prices(VIX_TICKER, cfg, incremental=True)[0]["adj_close"].dropna()
+        return get_prices(VIX_TICKER, cfg, incremental=True, shared=True)[0]["adj_close"].dropna()
     except Exception as e:                                                 # noqa: BLE001
-        path = index_data_dir(cfg, "raw") / f"{VIX_TICKER}.parquet"
+        path = market_data_dir(cfg) / f"{VIX_TICKER}.parquet"
         if path.exists():
             print(f"  (VIX refresh failed, using cached file: {e})")
             return pd.read_parquet(path)["adj_close"].dropna()

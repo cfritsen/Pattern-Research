@@ -1,9 +1,7 @@
-from datetime import datetime
 import pandas as pd
 import pytest
 from patternlab.market_insights import (
-    classify_vix_regime, classify_term_structure, compute_vix_card, _session_in_progress, MARKET_TZ,
-    VIX_CLOSE_MINUTES)
+    classify_vix_regime, classify_term_structure, compute_vix_card)
 
 
 @pytest.mark.parametrize("level,prior,expected", [
@@ -36,13 +34,6 @@ def test_vix_card_52_week_needs_a_full_year():
 
 def test_vix_card_empty():
     assert compute_vix_card(pd.Series([], dtype=float))["regime"] is None
-
-
-def test_vix_cutoff_is_415_not_400():
-    at = lambda h, m: datetime(2026, 10, 29, h, m, tzinfo=MARKET_TZ)   # a Thursday
-    assert not _session_in_progress(at(16, 5))                          # ETFs: session done at 4:00
-    assert _session_in_progress(at(16, 5), VIX_CLOSE_MINUTES)           # VIX: still in progress
-    assert not _session_in_progress(at(16, 20), VIX_CLOSE_MINUTES)
 
 
 def test_term_structure_labels():

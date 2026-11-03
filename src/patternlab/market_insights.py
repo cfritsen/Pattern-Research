@@ -1,8 +1,7 @@
 from __future__ import annotations
-from datetime import datetime
-from zoneinfo import ZoneInfo
 import pandas as pd
 from patternlab.fetch import get_prices
+from patternlab.session import last_completed_session_date
 
 INDEX_INSIGHT_TICKERS = [
     ("S&P 500", "SPY"),
@@ -11,15 +10,10 @@ INDEX_INSIGHT_TICKERS = [
     ("Russell 2000", "IWM"),
 ]
 
-MARKET_TZ = ZoneInfo("America/New_York")
-MARKET_CLOSE_HOUR = 16  # 4:00 PM Eastern, regular session close
-
-# VIX is the one non-ETF card. Its daily value is finalized a little after
-# the stock market closes (S&P 500 options trade until 4:15 PM Eastern), so
-# its "session still in progress" cutoff is later than the ETFs'.
+# "Completed session" is defined once, in session.py (4:15 PM Eastern, which
+# also covers VIX: its daily value is finalized a little after the close).
 VIX_TICKER = "^VIX"
 VIX3M_TICKER = "^VIX3M"   # 3-month VIX, for the term-structure reading
-VIX_CLOSE_MINUTES = 16 * 60 + 15
 
 # Regime bands (conventional VIX levels -- descriptive labels, not advice).
 VIX_CALM_BELOW = 15
@@ -30,26 +24,6 @@ VIX_STRESSED_AT = 30
 VIX_SURGE_RATIO = 1.25
 VIX_SURGE_LOOKBACK = 20
 VIX_YEAR_BARS = 252
-
-
-def _session_in_progress(now: datetime | None = None,
-                         close_minutes: int = MARKET_CLOSE_HOUR * 60) -> bool:
-    """True if a data row dated "today" could be a partial, mid-session
-    price rather than a completed session's close. This is a research
-    tool built on daily bars, not a live quote feed -- Market Insights
-    should report the most recently COMPLETED session, never a number
-    that's still moving.
-
-    Doesn't account for market holidays or early-close days: a holiday
-    has no new data row to begin with, so it's harmless here; an early
-    close (e.g. the day after Thanksgiving) would be misjudged as still
-    in progress until 4pm even though the session already settled --
-    a known, minor limitation rather than a full holiday calendar.
-    """
-    now = now or datetime.now(MARKET_TZ)
-    if now.weekday() >= 5:  # Saturday/Sunday -- no session to be "in progress"
-        return False
-    return now.hour * 60 + now.minute < close_minutes
 
 
 def _pct_change(valid_closes: pd.Series, bars_back: int):
@@ -116,38 +90,33 @@ def compute_vix_card(valid: pd.Series, vix3m_valid: pd.Series | None = None) -> 
     }
 
 
-def _load_vol_series(cfg: dict, ticker: str, today, close_minutes: int):
-    """Closes for a volatility index, dropping an unfinished 'today' bar.
+def _load_vol_series(cfg: dict, ticker: str, cutoff: pd.Timestamp):
+    """Closes for a volatility index, dropping any unfinished session.
     Returns None on any failure so these extras never break the page."""
     try:
-        df, _ = get_prices(ticker, cfg, incremental=True)
+        df, _ = get_prices(ticker, cfg, incremental=True, shared=True)
         s = df["adj_close"].dropna()
-        if (_session_in_progress(close_minutes=close_minutes) and not s.empty
-                and s.index[-1].date() == today):
-            s = s.iloc[:-1]
-        return s
+        return s[s.index <= cutoff]
     except Exception:
         return None
 
 
 def compute_market_insights(cfg: dict) -> dict:
-    drop_today = _session_in_progress()
-    today = datetime.now(MARKET_TZ).date()
+    cutoff = pd.Timestamp(last_completed_session_date())
 
     valid_by_ticker: dict[str, pd.Series] = {}
     for _, ticker in INDEX_INSIGHT_TICKERS:
-        df, _ = get_prices(ticker, cfg, incremental=True)
+        df, _ = get_prices(ticker, cfg, incremental=True, shared=True)
         valid = df["adj_close"].dropna()
-        # Today's session isn't over yet -- don't let a partial, still-moving
+        # A session that isn't over yet -- don't let a partial, still-moving
         # price masquerade as a completed bar.
-        if drop_today and not valid.empty and valid.index[-1].date() == today:
-            valid = valid.iloc[:-1]
+        valid = valid[valid.index <= cutoff]
         valid_by_ticker[ticker] = valid
 
     # VIX is fetched separately: a failure there must never take down the
     # four index cards.
-    vix_valid = _load_vol_series(cfg, VIX_TICKER, today, VIX_CLOSE_MINUTES)
-    vix3m_valid = _load_vol_series(cfg, VIX3M_TICKER, today, VIX_CLOSE_MINUTES)
+    vix_valid = _load_vol_series(cfg, VIX_TICKER, cutoff)
+    vix3m_valid = _load_vol_series(cfg, VIX3M_TICKER, cutoff)
 
     # The shared "as of" date is the EARLIEST of each ticker's own latest
     # valid date -- i.e. whichever ticker is most behind on adjustment

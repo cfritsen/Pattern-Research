@@ -18,8 +18,8 @@ def condition_mask(buckets: pd.DataFrame, conditions: list[dict]) -> pd.Series:
     return mask
 
 
-def store_by_stock(conn, thin, h0, pattern_id, run_id, view, split):
-    by_stock = per_stock_breakdown(thin, h0, MIN_PER_STOCK)
+def store_by_stock(conn, thin, h0, pattern_id, run_id, view, split, direction=1):
+    by_stock = per_stock_breakdown(thin, h0, MIN_PER_STOCK, direction)
     for ticker, r in by_stock.iterrows():
         mean = None if pd.isna(r["mean"]) else float(r["mean"])
         hit = None if pd.isna(r["hit_rate"]) else float(r["hit_rate"])
@@ -78,7 +78,7 @@ def main() -> None:
     print(f"Stored bucket edges for {len(edges)} features")
 
     passed = pd.read_sql(
-        "SELECT result_id, pattern_id, run_id, view FROM pattern_results_pooled "
+        "SELECT result_id, pattern_id, run_id, view, effect FROM pattern_results_pooled "
         "WHERE split='discovery' AND passed=1", conn)
     patterns = pd.read_sql("SELECT pattern_id, conditions_json FROM patterns", conn)
     passed = passed.merge(patterns, on="pattern_id")
@@ -110,7 +110,8 @@ def main() -> None:
         full_sub = panel[base_mask]
         keep_f = thin_non_overlapping(full_sub["bar_pos"], full_sub["ticker"], h0)
         full_thin = full_sub[keep_f]
-        store_by_stock(conn, full_thin, h0, row["pattern_id"], row["run_id"], row["view"], "full")
+        store_by_stock(conn, full_thin, h0, row["pattern_id"], row["run_id"], row["view"], "full",
+                        direction=-1 if row["effect"] < 0 else 1)
     conn.commit()
     store_clusters(conn, buckets, is_disc)
     conn.commit()

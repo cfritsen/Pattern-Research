@@ -92,11 +92,16 @@ def benjamini_hochberg(pvals: np.ndarray, q: float = 0.05) -> np.ndarray:
     return passed
 
 
-def breadth(values: np.ndarray, ticker: np.ndarray, year: np.ndarray, baseline: float) -> tuple[float, float]:
-    """Fraction of stocks with mean(values) > baseline, and fraction of years likewise."""
+def breadth(values: np.ndarray, ticker: np.ndarray, year: np.ndarray, baseline: float,
+            direction: int = 1) -> tuple[float, float]:
+    """Fraction of stocks whose mean(values) is on the pattern's side of the baseline,
+    and fraction of years likewise. direction=1 (bullish): mean above the baseline;
+    direction=-1 (bearish): mean below it. A bearish pattern is below the baseline in
+    most stocks and years, so counting "above" for it would always fail the breadth rule."""
     df = pd.DataFrame({"v": values, "t": ticker, "y": year})
     by_stock = df.groupby("t")["v"].mean()
     by_year = df.groupby("y")["v"].mean()
-    stock_frac = float((by_stock > baseline).mean()) if len(by_stock) else float("nan")
-    year_frac = float((by_year > baseline).mean()) if len(by_year) else float("nan")
+    side = (lambda s: s > baseline) if direction >= 0 else (lambda s: s < baseline)
+    stock_frac = float(side(by_stock).mean()) if len(by_stock) else float("nan")
+    year_frac = float(side(by_year).mean()) if len(by_year) else float("nan")
     return stock_frac, year_frac

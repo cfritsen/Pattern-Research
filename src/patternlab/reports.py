@@ -8,7 +8,15 @@ import pandas as pd
 def fmt_pct_sign(v) -> str:
     return f"{v:+.2%}"
 
-def load_single_condition_lookup(conn) -> dict:
+def net_edge(effect, cost):
+    """Edge net of trading cost: its size shrinks by `cost`, its sign is kept
+    (a -1.0% bearish Edge with 0.1% cost is -0.9%). Never crosses zero."""
+    if pd.isna(effect):
+        return effect
+    return float(np.sign(effect) * max(abs(effect) - cost, 0.0))
+
+
+def load_single_condition_lookup(conn, cost: float = 0.0) -> dict:
     df = pd.read_sql(
         "SELECT p.conditions_json, r.view, r.effect FROM pattern_results_pooled r "
         "JOIN patterns p ON p.pattern_id = r.pattern_id "
@@ -17,7 +25,7 @@ def load_single_condition_lookup(conn) -> dict:
     lookup = {}
     for _, row in df.iterrows():
         c = json.loads(row["conditions_json"])[0]
-        lookup[(c["feature"], c["bucket"], row["view"])] = row["effect"]
+        lookup[(c["feature"], c["bucket"], row["view"])] = net_edge(row["effect"], cost)
     return lookup
 
 
@@ -32,7 +40,9 @@ def best_single(conditions: list[dict], view: str, lookup: dict):
     return max(candidates, key=lambda t: abs(t[0]))
 
 
-def build_pattern_context(conn) -> pd.DataFrame:
+def build_pattern_context(conn, cost: float = 0.0) -> pd.DataFrame:
+    """cost: assumed trading cost. A view whose |Edge| is within it is dropped
+    (like a view that did not pass); every Edge left is shown net of cost."""
     qualifying = pd.read_sql(
         "SELECT DISTINCT pattern_id FROM pattern_results_pooled WHERE split='discovery' AND passed=1", conn)
     ids = tuple(qualifying["pattern_id"].tolist())
@@ -47,7 +57,7 @@ def build_pattern_context(conn) -> pd.DataFrame:
         f"FROM pattern_results_pooled r JOIN patterns p ON p.pattern_id = r.pattern_id "
         f"WHERE r.pattern_id IN ({placeholders})", conn, params=ids)
 
-    lookup = load_single_condition_lookup(conn)
+    lookup = load_single_condition_lookup(conn, cost)
     disc = df[df["split"] == "discovery"].copy()
     conf = df[df["split"] == "confirm"].set_index(["pattern_id", "view"])["mean_fwd_return"]
     disc["confirm_mean_fwd_return"] = disc.set_index(["pattern_id", "view"]).index.map(conf)
@@ -86,6 +96,15 @@ def build_pattern_context(conn) -> pd.DataFrame:
     merged["reference_mean"] = all_rows["mean_fwd_return"].where(passed_all).combine_first(
         flagged_rows["mean_fwd_return"].where(passed_flagged))
 
+    if cost > 0:
+        for view in ("all", "flagged"):
+            within = merged[f"effect_{view}"].abs() <= cost
+            for col in ["mean_fwd_return", "baseline_mean", "effect", "confirm_mean_fwd_return",
+                        "q_value", "hit_rate", "breadth_stocks", "breadth_years"]:
+                merged.loc[within, f"{col}_{view}"] = np.nan
+            merged[f"effect_{view}"] = merged[f"effect_{view}"].map(lambda e: net_edge(e, cost))
+        merged = merged[merged[["effect_all", "effect_flagged"]].notna().any(axis=1)]
+
     best_all, best_flagged = [], []
     for pid, row in merged.iterrows():
         conds = json.loads(row["conditions_json"])
@@ -104,17 +123,30 @@ def same_direction(discovery_val, confirm_val) -> bool:
     return (discovery_val >= 0) == (confirm_val >= 0)
 
 
+def return_matches_edge(mean_return, effect) -> bool:
+    """A pattern is credible only if its Return and its Edge point the same way.
+    Return = Edge + baseline, so with a positive baseline a small positive Return
+    can come with a negative Edge (the pattern rose, but less than the market
+    average). That is not a credible bullish result, and not a bearish one either
+    (the stocks still went up), so it is filtered out like a failed forward test."""
+    if pd.isna(mean_return) or pd.isna(effect):
+        return True
+    return (mean_return >= 0) == (effect >= 0)
+
+
 def passes_direction_filter(row) -> bool:
     ok_all = True
     if pd.notna(row["effect_all"]):
         c = row["confirm_mean_fwd_return_all"]
-        ok_all = same_direction(row["effect_all"],
-                                (c - row["baseline_mean_all"]) if pd.notna(c) else np.nan)
+        ok_all = (same_direction(row["effect_all"],
+                                 (c - row["baseline_mean_all"]) if pd.notna(c) else np.nan)
+                  and return_matches_edge(row["mean_fwd_return_all"], row["effect_all"]))
     ok_flagged = True
     if pd.notna(row["effect_flagged"]):
         c = row["confirm_mean_fwd_return_flagged"]
-        ok_flagged = same_direction(row["effect_flagged"],
-                                    (c - row["baseline_mean_flagged"]) if pd.notna(c) else np.nan)
+        ok_flagged = (same_direction(row["effect_flagged"],
+                                     (c - row["baseline_mean_flagged"]) if pd.notna(c) else np.nan)
+                      and return_matches_edge(row["mean_fwd_return_flagged"], row["effect_flagged"]))
     return ok_all and ok_flagged
 
 
@@ -132,7 +164,7 @@ def pattern_view(context: pd.DataFrame, top_n: int, worst: bool = False) -> pd.D
     return kept.sort_values("rank_key", ascending=False).head(top_n).reset_index(drop=True)
 
 
-def stock_view(conn, ticker: str, context: pd.DataFrame, top_n: int) -> pd.DataFrame:
+def stock_view(conn, ticker: str, context: pd.DataFrame, top_n: int, cost: float = 0.0) -> pd.DataFrame:
     by_stock = pd.read_sql(
         "SELECT pattern_id, view, n, mean_fwd_return, hit_rate, effect "
         "FROM pattern_results_by_stock WHERE ticker = ? AND split = 'full'", conn, params=(ticker,))
@@ -160,6 +192,21 @@ def stock_view(conn, ticker: str, context: pd.DataFrame, top_n: int) -> pd.DataF
     out["baseline_mean_flagged"] = ctx["baseline_mean_flagged"]
     out["edge_all"] = out["mean_fwd_return_all"] - out["baseline_mean_all"]
     out["edge_flagged"] = out["mean_fwd_return_flagged"] - out["baseline_mean_flagged"]
+    if cost > 0:
+        # Hidden outright: a stock result whose Edge is within the cost is removed
+        # (that view's numbers are blanked; a row with no view left is dropped).
+        hid = pd.DataFrame(index=out.index)
+        for view in ("all", "flagged"):
+            within = out[f"edge_{view}"].abs() <= cost
+            hid[view] = within
+            for col in ["n", "mean_fwd_return", "hit_rate", "stock_effect", "edge"]:
+                name = f"{col}_{view}" if col != "stock_effect" else f"stock_effect_{view}"
+                out.loc[within, name] = np.nan
+            out[f"edge_{view}"] = out[f"edge_{view}"].map(lambda e: net_edge(e, cost))
+        gone = (hid["all"] | hid["flagged"]) & out[["edge_all", "edge_flagged"]].isna().all(axis=1)
+        out = out[~gone]
+        if out.empty:
+            return pd.DataFrame()
     out["best_single_all"] = ctx["best_single_all"]
     out["best_single_flagged"] = ctx["best_single_flagged"]
     out["overlap_ratio"] = ctx["overlap_ratio"]
@@ -194,6 +241,8 @@ def direction_ok(row, view: str):
     effect = row[f"effect_{view}"]
     if pd.isna(effect):
         return None
+    if not return_matches_edge(row[f"mean_fwd_return_{view}"], effect):
+        return False
     confirm = row[f"confirm_mean_fwd_return_{view}"]
     baseline = row[f"baseline_mean_{view}"]
     if pd.isna(confirm):

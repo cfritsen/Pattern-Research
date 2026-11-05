@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from patternlab.config import load_config, ensure_dirs, manifest_path
+from patternlab.config import load_config, ensure_dirs, manifest_path, cost_for
 from patternlab.universe_fetch import get_universe
 from patternlab.buckets import CATEGORICAL, drop_date_level_pairs
 from patternlab.search import load_panel, build_buckets
@@ -21,7 +21,7 @@ def main() -> None:
     h0 = cfg["horizon"]
     progress_path = Path(cfg["data_dir"]) / f"progress_{cfg['index']}_m5.json"
     progress_path.unlink(missing_ok=True)
-    cost = cfg.get("cost", 0.001)
+    cost = cost_for(cfg)
     corr_threshold = cfg.get("corr_prune_threshold", 0.7)
     extremes_only = not cfg.get("test_all_buckets", False)
 

@@ -324,6 +324,11 @@
   <div id="page-watchlist-full" class="page">
     <h1>Watchlist</h1>
     <div class="note"><b>This report shows historical statistical patterns in price data. It is descriptive research, not investment advice, and not a recommendation to buy or sell any security.</b></div>
+    <div class="controls">
+      <label title="Patterns whose Edge is above the market average"><input id="wlBullish" type="checkbox" checked> Bullish</label>
+      <label title="Patterns whose Edge is below the market average"><input id="wlBearish" type="checkbox" checked> Bearish</label>
+      <span class="textMuted">Cards are ordered by the size of the historical return, up or down. The Bullish and Bearish boxes also filter the dashboard's Watchlist.</span>
+    </div>
     <div id="wlFullStatus" class="textMuted"></div>
     <div id="wlFullCards" class="watchlistGrid"></div>
   </div>
@@ -830,7 +835,7 @@ const DEFAULT_CONFIG = {
   index: "sp500", start_date: "1996-01-01", use_stooq_fallback: true,
   jump_threshold: 0.25, pause_seconds: 0.5,
   start_overrides: { JCI: "2007-07-02" },
-  horizon: 5, move_atr: 1.0, discovery_frac: 0.70, cost: 0.001,
+  horizon: 5, move_atr: 1.0, discovery_frac: 0.70, cost_sp500: 0.001, cost_sp400: 0.002, cost_sp600: 0.003,
   corr_prune_threshold: 0.7, test_all_buckets: false, multithreading: false,
   disabled_features: [],
 };
@@ -1095,17 +1100,26 @@ async function loadWatchlist() {
   renderFullWatchlist();
 }
 
+// A match is bullish or bearish by its pattern's Edge (above or below the market average),
+// not by the sign of the raw return. Cards are ordered by the absolute historical return, so
+// 1%, -0.93% and 0.8% come out in that order.
+function watchlistVisible(m) {
+  const bearish = m.direction === 'bearish';
+  return bearish ? document.getElementById('wlBearish').checked : document.getElementById('wlBullish').checked;
+}
+
 function buildWatchlistGroups(matches) {
   const byTicker = {};
-  for (const m of matches) {
+  for (const m of matches.filter(watchlistVisible)) {
     (byTicker[m.ticker] = byTicker[m.ticker] || []).push(m);
   }
+  const absRet = m => Math.abs(m.historical_return);
   return Object.keys(byTicker).sort((a, b) => {
-    const topA = Math.max(...byTicker[a].map(m => m.historical_return));
-    const topB = Math.max(...byTicker[b].map(m => m.historical_return));
+    const topA = Math.max(...byTicker[a].map(absRet));
+    const topB = Math.max(...byTicker[b].map(absRet));
     return topB - topA;
   }).map(t => {
-    const group = byTicker[t].slice().sort((a, b) => b.historical_return - a.historical_return);
+    const group = byTicker[t].slice().sort((a, b) => absRet(b) - absRet(a));
     return { ticker: t, top: group[0], extra: group.length - 1 };
   });
 }
@@ -1114,7 +1128,7 @@ function watchlistCardHtml(entry) {
   const sourceNote = entry.top.return_source === 'stock' ? 'stock history' : 'market-wide';
   return `<a class="watchlistCard" href="#stock-research?ticker=${entry.ticker}" style="text-decoration:none;color:inherit;display:block">
     <div class="ticker">${entry.ticker}</div>
-    <div class="badge">${entry.top.badge}</div>
+    <div class="badge">${entry.top.badge}${entry.top.direction === 'bearish' ? ' <span class="textFaint">\u00B7 bearish</span>' : ''}</div>
     <div class="return">${fmtPctColored(entry.top.historical_return)} historical return <span class="textFaint">(${sourceNote})</span></div>
     ${entry.extra > 0 ? `<div class="extra">+${entry.extra} more match${entry.extra === 1 ? '' : 'es'}</div>` : ''}
   </a>`;
@@ -1123,26 +1137,29 @@ function watchlistCardHtml(entry) {
 function renderWatchlist() {
   const status = document.getElementById('watchlistStatus');
   const container = document.getElementById('watchlistCards');
-  if (!lastWatchlistMatches.length) {
+  const groups = buildWatchlistGroups(lastWatchlistMatches);
+  if (!groups.length) {
     status.textContent = '';
     container.innerHTML = '<p class="placeholder">No current matches.</p>';
     return;
   }
-  const groups = buildWatchlistGroups(lastWatchlistMatches);
   const top10 = groups.slice(0, 10);
   status.textContent = `Top ${top10.length} of ${groups.length} tickers`;
   container.innerHTML = top10.map(watchlistCardHtml).join('');
 }
 
+document.getElementById('wlBullish').addEventListener('change', () => { renderWatchlist(); renderFullWatchlist(); });
+document.getElementById('wlBearish').addEventListener('change', () => { renderWatchlist(); renderFullWatchlist(); });
+
 function renderFullWatchlist() {
   const status = document.getElementById('wlFullStatus');
   const container = document.getElementById('wlFullCards');
-  if (!lastWatchlistMatches.length) {
+  const groups = buildWatchlistGroups(lastWatchlistMatches);
+  if (!groups.length) {
     status.textContent = '';
     container.innerHTML = '<p class="placeholder">No current matches.</p>';
     return;
   }
-  const groups = buildWatchlistGroups(lastWatchlistMatches);
   status.textContent = `${groups.length} tickers currently matching a historical pattern`;
   container.innerHTML = groups.map(watchlistCardHtml).join('');
 }

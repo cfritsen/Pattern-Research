@@ -5,6 +5,21 @@ import yaml
 
 VALID_HORIZONS = (1, 5, 10, 20, 63, 126, 252)
 
+# Assumed round-trip trading cost per index, as a fraction of price (0.001 = 0.1%).
+# Judgment-based starting points: wider bid/ask spreads and more price impact as
+# companies get smaller. Override per index with `index_costs` in config.yaml or
+# on the Settings page. `cost` is only the fallback for an index with no entry here.
+DEFAULT_INDEX_COSTS = {"sp500": 0.001, "sp400": 0.002, "sp600": 0.003}
+
+
+def cost_for(cfg: dict) -> float:
+    """The assumed trading cost for cfg's index."""
+    index = cfg.get("index")
+    own = (cfg.get("index_costs") or {}).get(index)
+    if own is None:
+        own = DEFAULT_INDEX_COSTS.get(index)
+    return float(own if own is not None else cfg.get("cost", 0.001))
+
 REQUIRED_KEYS = [
     "index", "data_dir", "report_dir", "start_date",
     "use_stooq_fallback", "jump_threshold", "pause_seconds",
@@ -41,6 +56,8 @@ def save_config(cfg: dict, path: str = "config.yaml") -> None:
     ordered = {k: cfg[k] for k in REQUIRED_KEYS if k in cfg}
     if "start_overrides" in cfg:
         ordered["start_overrides"] = cfg["start_overrides"]
+    if "index_costs" in cfg:
+        ordered["index_costs"] = cfg["index_costs"]
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(ordered, f, default_flow_style=False, sort_keys=False)
 
@@ -70,6 +87,15 @@ def validate_config(cfg: dict, path: str = "config.yaml") -> None:
         errors.append(
             f"cost={cfg['cost']!r} must be zero or a positive number "
             f"(a fraction of price, e.g. 0.001 = 0.1% round-trip).")
+
+    ic = cfg.get("index_costs")
+    if ic is not None:
+        if not isinstance(ic, dict):
+            errors.append("index_costs must be a mapping of index name to cost (a fraction of price).")
+        else:
+            for k, v in ic.items():
+                if not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0:
+                    errors.append(f"index_costs[{k!r}]={v!r} must be zero or a positive number.")
 
     if "jump_threshold" in cfg and (not isinstance(cfg["jump_threshold"], (int, float)) or cfg["jump_threshold"] <= 0):
         errors.append(f"jump_threshold={cfg['jump_threshold']!r} must be a positive number.")

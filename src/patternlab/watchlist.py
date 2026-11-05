@@ -5,6 +5,7 @@ from patternlab.config import index_data_dir
 import numpy as np
 import pandas as pd
 from patternlab.buckets import CATEGORICAL
+from patternlab.config import cost_for
 from patternlab.reports import build_pattern_context, passes_direction_filter
 from patternlab.humanize import badge_text, conditions_html
 
@@ -126,9 +127,22 @@ def load_stock_stats(conn, pattern_ids: set[int], ticker_filter: str | None = No
     return out
 
 
+def stock_agrees(stats, prow, view, cost: float = 0.0) -> bool:
+    """BF-11: a stock's own average return must point the same way as the pattern's
+    market-wide Edge; otherwise the stock-level result contradicts the pattern.
+    Cost filter: the stock's own Edge (its mean minus the market baseline) must also
+    be larger than the trading cost, bullish or bearish; otherwise it is hidden."""
+    if not stats:
+        return True
+    if (stats["mean_fwd_return"] >= 0) != (float(prow[f"effect_{view}"]) >= 0):
+        return False
+    return abs(stats["mean_fwd_return"] - float(prow[f"baseline_mean_{view}"])) > cost
+
+
 def compute_watchlist(cfg: dict, uni: pd.DataFrame, conn, only_ticker: str | None = None) -> list[dict]:
     """Flat (ticker, pattern_id, view, ...) match rows."""
-    context = build_pattern_context(conn)
+    cost = cost_for(cfg)
+    context = build_pattern_context(conn, cost)
     if context.empty:
         return []
     kept = context[context.apply(passes_direction_filter, axis=1)]
@@ -155,6 +169,8 @@ def compute_watchlist(cfg: dict, uni: pd.DataFrame, conn, only_ticker: str | Non
             market_return = float(prow[f"mean_fwd_return_{view}"])
             for ticker in matching_tickers:
                 stats = stock_returns.get((ticker, int(pattern_id), view))
+                if not stock_agrees(stats, prow, view, cost):
+                    continue
                 matches.append({
                     "ticker": ticker,
                     "pattern_id": int(pattern_id),
@@ -163,6 +179,8 @@ def compute_watchlist(cfg: dict, uni: pd.DataFrame, conn, only_ticker: str | Non
                     "conditions": conditions,
                     "historical_return": stats["mean_fwd_return"] if stats else market_return,
                     "return_source": "stock" if stats else "market",
+                    # the pattern's direction: its market-wide Edge below / above the baseline
+                    "direction": "bearish" if float(prow[f"effect_{view}"]) < 0 else "bullish",
                     "as_of_date": None,
                 })
     return matches
@@ -175,7 +193,8 @@ def compute_matching_table(cfg: dict, uni: pd.DataFrame, conn, ticker: str) -> l
         return []
     row_frame = snapshot.loc[[ticker]]
 
-    context = build_pattern_context(conn)
+    cost = cost_for(cfg)
+    context = build_pattern_context(conn, cost)
     if context.empty:
         return []
     kept = context[context.apply(passes_direction_filter, axis=1)]
@@ -194,6 +213,8 @@ def compute_matching_table(cfg: dict, uni: pd.DataFrame, conn, ticker: str) -> l
             if pd.isna(prow[f"effect_{view}"]):
                 continue
             stats = stock_stats.get((ticker, int(pattern_id), view))
+            if not stock_agrees(stats, prow, view, cost):
+                continue
             confirmed = stats is not None
             market_n = prow["n_all"] if view == "all" else prow["n_flagged"]
             rows.append({
@@ -227,7 +248,8 @@ def matching_table_to_api_rows(rows: list[dict], edges_by_feature: dict) -> list
 
 def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int) -> list[dict]:
     """Every ticker currently matching ONE fixed pattern."""
-    context = build_pattern_context(conn)
+    cost = cost_for(cfg)
+    context = build_pattern_context(conn, cost)
     if context.empty or pattern_id not in context.index:
         return []
     prow = context.loc[pattern_id]
@@ -250,6 +272,8 @@ def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int)
             if pd.isna(prow[f"effect_{view}"]):
                 continue
             stats = stock_stats.get((ticker, pattern_id, view))
+            if not stock_agrees(stats, prow, view, cost):
+                continue
             confirmed = stats is not None
             market_n = prow["n_all"] if view == "all" else prow["n_flagged"]
             rows.append({
@@ -265,9 +289,9 @@ def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int)
     return rows
 
 
-def compute_month_patterns_context(conn, month: int) -> pd.DataFrame:
+def compute_month_patterns_context(conn, month: int, cost: float = 0.0) -> pd.DataFrame:
     """Pattern rows whose conditions include month == the given bucket."""
-    context = build_pattern_context(conn)
+    context = build_pattern_context(conn, cost)
     if context.empty:
         return context
     def has_month(conds_json):
@@ -279,9 +303,9 @@ def compute_month_patterns_context(conn, month: int) -> pd.DataFrame:
     return kept[kept.apply(passes_direction_filter, axis=1)]
 
 
-def compute_month_stock_matches(conn, month: int) -> list[dict]:
+def compute_month_stock_matches(conn, month: int, cost: float = 0.0) -> list[dict]:
     """Purely historical -- no live/current data read at all."""
-    context = compute_month_patterns_context(conn, month)
+    context = compute_month_patterns_context(conn, month, cost)
     if context.empty:
         return []
     pattern_ids = set(int(i) for i in context.index)
@@ -305,9 +329,9 @@ def compute_month_stock_matches(conn, month: int) -> list[dict]:
     return matches
 
 
-def compute_current_month_highlights(conn, month: int) -> dict:
+def compute_current_month_highlights(conn, month: int, cost: float = 0.0) -> dict:
     """Top 5 patterns and top 5 stocks for the given month."""
-    context = compute_month_patterns_context(conn, month)
+    context = compute_month_patterns_context(conn, month, cost)
     if context.empty:
         return {"patterns": [], "stocks": []}
 
@@ -327,7 +351,7 @@ def compute_current_month_highlights(conn, month: int) -> dict:
             "return": ret,
         })
 
-    stock_matches = compute_month_stock_matches(conn, month)
+    stock_matches = compute_month_stock_matches(conn, month, cost)
     by_ticker: dict[str, dict] = {}
     for m in stock_matches:
         cur = by_ticker.get(m["ticker"])

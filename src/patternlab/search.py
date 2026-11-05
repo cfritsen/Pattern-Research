@@ -80,13 +80,16 @@ def evaluate_condition(sub: pd.DataFrame, market: pd.DataFrame, view: str, h0: i
 
     raw_baseline_mean = float(market["fwd_ret"].mean())
     p, lo, hi = cluster_bootstrap_pvalue(excess, dates_np, baseline=0.0)
-    s_frac, y_frac = breadth(fwd.to_numpy(), thin["ticker"].to_numpy(), thin["year"].to_numpy(), raw_baseline_mean)
+    direction = 1 if float(fwd.mean()) >= raw_baseline_mean else -1     # bullish / bearish pattern
+    s_frac, y_frac = breadth(fwd.to_numpy(), thin["ticker"].to_numpy(), thin["year"].to_numpy(),
+                             raw_baseline_mean, direction)
 
-    mh = thin["up_hit"].notna()
+    hit_col = "up_hit" if direction >= 0 else "down_hit"     # BF-10: hit rate in the pattern's own direction
+    mh = thin[hit_col].notna()
     return dict(
         n_occurrences=int(n), n_thinned=int(len(thin)),
         mean_fwd_return=float(fwd.mean()), baseline_mean=raw_baseline_mean,
-        hit_rate=float(thin.loc[mh, "up_hit"].mean()) if mh.any() else float("nan"),
+        hit_rate=float(thin.loc[mh, hit_col].mean()) if mh.any() else float("nan"),
         baseline_hit_rate=float("nan"),
         effect=float(fwd.mean()) - raw_baseline_mean,
         p_value=p, ci_low=lo, ci_high=hi,

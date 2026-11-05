@@ -9,6 +9,10 @@ horizon: 5
 move_atr: 1
 discovery_frac: 0.7
 cost: 0.001
+index_costs:
+  sp500: 0.001
+  sp400: 0.002
+  sp600: 0.003
 corr_prune_threshold: 0.7
 test_all_buckets: false
 multithreading: true

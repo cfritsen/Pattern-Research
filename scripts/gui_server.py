@@ -6,7 +6,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 from patternlab.config import (
     load_config, ensure_dirs, read_raw_config, save_config,
-    validate_config, ConfigError, VALID_HORIZONS,
+    validate_config, ConfigError, VALID_HORIZONS, cost_for, DEFAULT_INDEX_COSTS,
 )
 from patternlab.db import connect
 from patternlab.reports import load_clusters, build_pattern_context, pattern_view, to_api_rows, stock_view, stock_to_api_rows, passes_direction_filter
@@ -43,8 +43,12 @@ FIELD_METADATA = [
      "help": "Size of the \"move\" outcome, in units of that bar's own ATR%."},
     {"key": "discovery_frac", "label": "Discovery fraction", "type": "number", "min": 0.01, "max": 0.99, "step": 0.01,
      "help": "Fraction of the date range used for discovery (vs. confirmation)."},
-    {"key": "cost", "label": "Assumed trading cost", "type": "number", "min": 0, "step": 0.0001,
-     "help": "Assumed round-trip trading cost, as a fraction of price (0.001 = 0.1%)."},
+    {"key": "cost_sp500", "label": "Trading cost: S&P 500", "type": "number", "min": 0, "step": 0.0001,
+     "help": "Assumed round-trip trading cost, as a fraction of price (0.001 = 0.1%). Edge is shown net of this, and results whose Edge is within it are hidden."},
+    {"key": "cost_sp400", "label": "Trading cost: S&P 400", "type": "number", "min": 0, "step": 0.0001,
+     "help": "Same, for mid-cap stocks (wider spreads, so a higher default)."},
+    {"key": "cost_sp600", "label": "Trading cost: S&P 600", "type": "number", "min": 0, "step": 0.0001,
+     "help": "Same, for small-cap stocks (widest spreads, so the highest default)."},
     {"key": "corr_prune_threshold", "label": "Correlation prune threshold", "type": "number", "min": 0.01, "max": 0.99, "step": 0.01,
      "help": "Feature pairs with |Spearman correlation| above this are excluded from 2-condition testing."},
     {"key": "test_all_buckets", "label": "Test all buckets (full grid)", "type": "boolean",
@@ -123,7 +127,7 @@ def api_patterns():
             "SELECT feature, edge_index, edge_value FROM feature_bucket_edges ORDER BY feature, edge_index"):
         edges_by_feature.setdefault(feat, []).append(val)
 
-    context = build_pattern_context(conn)
+    context = build_pattern_context(conn, cost_for(cfg))
     return jsonify(to_api_rows(context, edges_by_feature, load_clusters(conn)))
 
 
@@ -141,6 +145,8 @@ def api_get_config():
             from patternlab.parallel import resolved_worker_count
             on_count = resolved_worker_count({**cfg, "multithreading": True})
             f["help"] += f" (currently resolves to {on_count} worker{'s' if on_count != 1 else ''} when on)"
+    costs = {**DEFAULT_INDEX_COSTS, **(cfg.get("index_costs") or {})}
+    cfg = {**cfg, **{f"cost_{k}": v for k, v in costs.items()}}
     feature_meta = [{"key": f, "label": FEATURE_INFO[f][0] if f in FEATURE_INFO else f.capitalize()}
                     for f in ALL_FEATURES]
     return jsonify({"config": cfg, "fields": meta, "errors": errors, "all_features": feature_meta})
@@ -149,6 +155,12 @@ def api_get_config():
 @app.post("/api/config")
 def api_save_config():
     cfg = request.get_json()
+    costs = dict(DEFAULT_INDEX_COSTS)
+    for k in list(DEFAULT_INDEX_COSTS):
+        if f"cost_{k}" in cfg:
+            costs[k] = cfg.pop(f"cost_{k}")
+    cfg["index_costs"] = costs
+    cfg.setdefault("cost", read_raw_config().get("cost", 0.001))
     try:
         save_config(cfg)
     except ConfigError as e:
@@ -226,12 +238,13 @@ def api_stock_research():
     uni = get_universe(cfg)
     conn = connect(cfg)
     edges_by_feature = load_edges(conn)
-    context = build_pattern_context(conn)
+    cost = cost_for(cfg)
+    context = build_pattern_context(conn, cost)
     # Same direction-consistency filter Market Research and the Watchlist
     # already apply -- without it, Per Stock showed patterns that had
     # already been excluded everywhere else (confirm-period reversals).
     kept = context[context.apply(passes_direction_filter, axis=1)] if not context.empty else context
-    sdf = stock_view(conn, ticker, kept, top_n=100000)
+    sdf = stock_view(conn, ticker, kept, top_n=100000, cost=cost)
 
     live_matches = compute_watchlist(cfg, uni, conn, only_ticker=ticker)
     live_ids = {m["pattern_id"] for m in live_matches}
@@ -269,7 +282,7 @@ def api_pattern_matches():
     uni = get_universe(cfg)
     conn = connect(cfg)
     edges_by_feature = load_edges(conn)
-    context = build_pattern_context(conn)
+    context = build_pattern_context(conn, cost_for(cfg))
     if context.empty or pattern_id not in context.index:
         return jsonify({"error": "Pattern not found"}), 404
     prow = context.loc[pattern_id]
@@ -298,7 +311,7 @@ def api_date_insights_patterns():
     cfg = _cfg_for(index)
     conn = connect(cfg)
     edges_by_feature = load_edges(conn)
-    context = compute_month_patterns_context(conn, month)
+    context = compute_month_patterns_context(conn, month, cost_for(cfg))
     return jsonify(to_api_rows(context, edges_by_feature))
 
 
@@ -316,7 +329,7 @@ def api_date_insights_stocks():
         return jsonify({"error": f"Unknown index {index!r}"}), 400
     cfg = _cfg_for(index)
     conn = connect(cfg)
-    matches = compute_month_stock_matches(conn, month)
+    matches = compute_month_stock_matches(conn, month, cost_for(cfg))
     return jsonify(matches)
 
 @app.get("/api/dashboard/market-insights")
@@ -334,7 +347,7 @@ def api_month_highlights():
     cfg = _cfg_for(index)
     conn = connect(cfg)
     month = datetime.now().month
-    data = compute_current_month_highlights(conn, month)
+    data = compute_current_month_highlights(conn, month, cost_for(cfg))
     data["month"] = month
     return jsonify(data)
 

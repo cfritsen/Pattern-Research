@@ -60,3 +60,12 @@ def test_report_labels_follow_horizon(tmp_path):
         assert f"{h}-day Return" in out.columns and f"{h}-day Baseline" in out.columns
         assert "5-day Return" not in out.columns or h == 5
     assert list(out["Cases Found"]) == ["400"] and "Raw Cases" not in out.columns
+
+
+def test_cost_nets_edge_and_hides_results_within_it(tmp_path):
+    conn = _db(tmp_path, True)                       # both views have effect +1.00%
+    ctx = build_pattern_context(conn, cost=0.002)
+    r = ctx.iloc[0]
+    assert abs(r["effect_all"] - 0.008) < 1e-12 and abs(r["effect_flagged"] - 0.008) < 1e-12
+    assert abs(r["mean_fwd_return_all"] - 0.01) < 1e-12          # Return stays gross
+    assert build_pattern_context(conn, cost=0.02).empty is True or len(build_pattern_context(conn, cost=0.02)) == 0

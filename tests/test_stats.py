@@ -111,3 +111,34 @@ def test_apply_buckets_handles_out_of_range():
     edges = [1.0, 2.0, 3.0]
     b = apply_buckets(pd.Series([-5.0, 1.5, 100.0]), edges)
     assert b.tolist() == [0, 1, 3]
+
+
+def test_breadth_is_direction_aware():
+    # A bearish pattern: returns below the baseline in every stock and year.
+    v = np.array([-1.0, -2.0, -1.5, -0.5])
+    t = np.array(["A", "A", "B", "B"])
+    y = np.array([2020, 2020, 2021, 2021])
+    assert breadth(v, t, y, baseline=0.4) == (0.0, 0.0)                    # default: counts "above"
+    assert breadth(v, t, y, baseline=0.4, direction=-1) == (1.0, 1.0)      # bearish: counts "below"
+    # Mixed: one stock below the baseline, one above.
+    v2 = np.array([-1.0, -1.0, 2.0, 2.0])
+    s, y_ = breadth(v2, t, y, baseline=0.4, direction=-1)
+    assert s == 0.5 and y_ == 0.5
+
+
+def test_a_bearish_pattern_can_pass_the_breadth_rule():
+    # End to end through evaluate_condition: a pattern followed by returns well below the
+    # market average, in every stock and year, must report high breadth (it used to report ~0).
+    from patternlab.search import evaluate_condition
+    rng = np.random.default_rng(0)
+    dates = pd.bdate_range("2005-01-03", periods=2600)
+    market = pd.DataFrame({"fwd_ret": rng.normal(0.004, 0.01, len(dates))}, index=dates)
+    rows = []
+    for k in range(40):
+        pos = rng.choice(np.arange(0, 2600, 10), size=30, replace=False)       # >= 5 bars apart
+        for b in pos:
+            rows.append({"ticker": f"T{k}", "bar_pos": int(b), "date": dates[b], "year": dates[b].year,
+                         "fwd_ret_5": -0.006 + rng.normal(0, 0.01), "up_hit": 0.0, "down_hit": 1.0})
+    res = evaluate_condition(pd.DataFrame(rows), market, "all", 5)
+    assert res is not None and res["effect"] < 0
+    assert res["breadth_stocks"] > 0.9 and res["breadth_years"] > 0.9

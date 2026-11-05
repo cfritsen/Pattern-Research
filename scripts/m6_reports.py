@@ -1,6 +1,6 @@
 import argparse
 import pandas as pd
-from patternlab.config import load_config, ensure_dirs, report_dir_for
+from patternlab.config import load_config, ensure_dirs, report_dir_for, cost_for
 from patternlab.db import connect
 from patternlab.reports import build_pattern_context, pattern_view, stock_view
 from patternlab.humanize import humanize_pattern_view, humanize_stock_view
@@ -61,10 +61,11 @@ def main() -> None:
             "SELECT feature, edge_index, edge_value FROM feature_bucket_edges ORDER BY feature, edge_index"):
         edges_by_feature.setdefault(feat, []).append(val)
 
-    context = build_pattern_context(conn)
+    cost = cost_for(cfg)
+    context = build_pattern_context(conn, cost)
     pdf = pattern_view(context, args.top)
     wdf = pattern_view(context, args.top, worst=True)
-    sdf = stock_view(conn, args.ticker, context, 5) if args.ticker else pd.DataFrame()
+    sdf = stock_view(conn, args.ticker, context, 5, cost) if args.ticker else pd.DataFrame()
 
     out_dir = report_dir_for(cfg)
     pdf.to_csv(out_dir / "pattern_view.csv", index=False)

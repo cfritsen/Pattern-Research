@@ -12,3 +12,10 @@ def test_below_min_n_keeps_row_but_nulls_stats():
     assert pd.notna(out.loc["AAA", "mean"])
     assert pd.isna(out.loc["BBB", "mean"])
     assert pd.isna(out.loc["BBB", "hit_rate"]) and pd.isna(out.loc["BBB", "effect"])
+
+def test_bearish_direction_uses_down_hit():
+    import pandas as pd
+    thin = pd.DataFrame({"ticker": ["A"] * 30, "fwd_ret_5": [-0.01] * 30,
+                         "up_hit": [0.0] * 30, "down_hit": [1.0] * 30})
+    assert per_stock_breakdown(thin, 5, min_n=30).loc["A", "hit_rate"] == 0.0
+    assert per_stock_breakdown(thin, 5, min_n=30, direction=-1).loc["A", "hit_rate"] == 1.0

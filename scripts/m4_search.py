@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from patternlab.config import load_config, ensure_dirs, manifest_path
+from patternlab.config import load_config, ensure_dirs, manifest_path, cost_for
 from patternlab.universe_fetch import get_universe
 from patternlab.buckets import CATEGORICAL, MARKET_LEVEL
 from patternlab.search import load_panel, build_buckets
@@ -66,7 +66,9 @@ def main() -> None:
         df = pd.DataFrame(results)
         disc_mask = df["split"] == "discovery"
         pv = df.loc[disc_mask, "p_value"].to_numpy()
-        passed = benjamini_hochberg(pv, q=0.05)
+        # Cost filter: a result whose Edge is within the trading cost cannot pass, bullish or bearish.
+        cost = cost_for(cfg)
+        passed = benjamini_hochberg(pv, q=0.05) & (df.loc[disc_mask, "effect"].abs().to_numpy() > cost)
         df.loc[disc_mask, "passed"] = passed.astype(int)
         pass_map = dict(zip(df.loc[disc_mask, "pattern_id"], passed))
         df.loc[~disc_mask, "passed"] = df.loc[~disc_mask, "pattern_id"].map(pass_map).fillna(0).astype(int)

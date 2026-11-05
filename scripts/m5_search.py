@@ -148,7 +148,7 @@ def main() -> None:
         df2.loc[conf_idx, "passed"] = df2.loc[conf_idx, "pattern_id"].map(pass_map).fillna(0).astype(int)
 
         insert_cols = ["pattern_id", "run_id", "view", "horizon", "outcome_type", "split", "n_occurrences",
-                      "mean_fwd_return", "baseline_mean", "hit_rate", "baseline_hit_rate", "effect", "p_value",
+                      "n_thinned", "mean_fwd_return", "baseline_mean", "hit_rate", "baseline_hit_rate", "effect", "p_value",
                       "q_value", "ci_low", "ci_high", "breadth_stocks", "breadth_years", "overlap_ratio", "passed"]
         for _, row in df2.iterrows():
             insert_result(conn, {k: (None if (k not in row or pd.isna(row[k])) else row[k]) for k in insert_cols})

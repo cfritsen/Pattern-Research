@@ -206,8 +206,8 @@ def compute_matching_table(cfg: dict, uni: pd.DataFrame, conn, ticker: str) -> l
                 "edge": stats["effect"] if confirmed else float(prow[f"effect_{view}"]),
                 "hit_rate": stats["hit_rate"] if confirmed else (
                     None if pd.isna(prow[f"hit_rate_{view}"]) else float(prow[f"hit_rate_{view}"])),
-                "pre_index_bias": None if pd.isna(prow["n_all"]) or pd.isna(prow["n_flagged"]) or prow["n_all"] == 0
-                    else (prow["n_all"] - prow["n_flagged"]) / prow["n_all"],
+                "pre_index_bias": None if pd.isna(prow["n_raw_all"]) or pd.isna(prow["n_raw_flagged"]) or prow["n_raw_all"] == 0
+                    else (prow["n_raw_all"] - prow["n_raw_flagged"]) / prow["n_raw_all"],
                 "overlap_ratio": None if pd.isna(prow["overlap_ratio"]) else float(prow["overlap_ratio"]),
                 "top3_year_share": None if pd.isna(prow["top3_year_share"]) else float(prow["top3_year_share"]),
                 "mean_excl_top3": None if pd.isna(prow["mean_excl_top3"]) else float(prow["mean_excl_top3"]),

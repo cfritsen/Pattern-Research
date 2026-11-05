@@ -72,7 +72,7 @@ def main() -> None:
         df.loc[~disc_mask, "passed"] = df.loc[~disc_mask, "pattern_id"].map(pass_map).fillna(0).astype(int)
 
         insert_cols = ["pattern_id", "run_id", "view", "horizon", "outcome_type", "split",
-                      "n_occurrences", "mean_fwd_return", "baseline_mean", "hit_rate",
+                      "n_occurrences", "n_thinned", "mean_fwd_return", "baseline_mean", "hit_rate",
                       "baseline_hit_rate", "effect", "p_value", "q_value", "ci_low", "ci_high",
                       "breadth_stocks", "breadth_years", "passed"]
         for _, row in df.iterrows():

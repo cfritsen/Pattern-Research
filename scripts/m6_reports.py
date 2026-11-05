@@ -13,10 +13,11 @@ DISCLAIMER = ("This report shows historical statistical patterns in price data. 
 
 
 def to_html(pattern_df: pd.DataFrame, worst_df: pd.DataFrame, stock_df: pd.DataFrame,
-           ticker: str | None, edges_by_feature: dict[str, list[float]]) -> str:
-    friendly_p = humanize_pattern_view(pattern_df, edges_by_feature)
-    friendly_w = humanize_pattern_view(worst_df, edges_by_feature) if len(worst_df) else None
-    friendly_s = humanize_stock_view(stock_df, edges_by_feature) if ticker and len(stock_df) else None
+           ticker: str | None, edges_by_feature: dict[str, list[float]],
+           horizon: int = 5) -> str:
+    friendly_p = humanize_pattern_view(pattern_df, edges_by_feature, horizon)
+    friendly_w = humanize_pattern_view(worst_df, edges_by_feature, horizon) if len(worst_df) else None
+    friendly_s = humanize_stock_view(stock_df, edges_by_feature, horizon) if ticker and len(stock_df) else None
     parts = [
         "<html><head><meta charset='utf-8'><title>Pattern Research Report</title><style>",
         "body{font-family:sans-serif;max-width:1400px;margin:2em auto}",
@@ -70,7 +71,7 @@ def main() -> None:
     wdf.to_csv(out_dir / "pattern_view_worst.csv", index=False)
     if args.ticker:
         sdf.to_csv(out_dir / f"stock_view_{args.ticker}.csv", index=False)
-    (out_dir / "report.html").write_text(to_html(pdf, wdf, sdf, args.ticker, edges_by_feature), encoding="utf-8")
+    (out_dir / "report.html").write_text(to_html(pdf, wdf, sdf, args.ticker, edges_by_feature, cfg["horizon"]), encoding="utf-8")
 
     print(f"Wrote {out_dir / 'pattern_view.csv'} ({len(pdf)} rows)")
     print(f"Wrote {out_dir / 'pattern_view_worst.csv'} ({len(wdf)} rows)")

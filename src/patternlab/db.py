@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS pattern_results_by_stock (
     effect REAL
 );
 
+CREATE TABLE IF NOT EXISTS pattern_clusters (
+    pattern_id INTEGER PRIMARY KEY REFERENCES patterns(pattern_id),
+    cluster_id INTEGER NOT NULL,      -- the lead pattern's pattern_id
+    is_lead INTEGER NOT NULL,
+    cluster_size INTEGER NOT NULL,
+    jaccard REAL NOT NULL             -- overlap with the lead (1.0 for the lead itself)
+);
+
 CREATE TABLE IF NOT EXISTS feature_bucket_edges (
     feature TEXT NOT NULL,
     edge_index INTEGER NOT NULL,
@@ -93,6 +101,10 @@ def connect(cfg: dict) -> sqlite3.Connection:
             conn.execute(f"ALTER TABLE pattern_results_pooled ADD COLUMN {col} REAL")
         except sqlite3.OperationalError:
             pass
+    try:   # cases left after overlapping occurrences are thinned out (NULL in results from before this column)
+        conn.execute("ALTER TABLE pattern_results_pooled ADD COLUMN n_thinned INTEGER")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     return conn
 

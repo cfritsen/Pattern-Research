@@ -184,14 +184,15 @@ def dual_best_single(entry_all, entry_flagged) -> str:
     return f"{best_single_label(entry_all)} / {best_single_label(entry_flagged)}"
 
 
-def humanize_pattern_view(df: pd.DataFrame, edges_by_feature: dict[str, list[float]] | None) -> pd.DataFrame:
+def humanize_pattern_view(df: pd.DataFrame, edges_by_feature: dict[str, list[float]] | None,
+                          horizon: int = 5) -> pd.DataFrame:
     df = df.reset_index(drop=True)
     out = pd.DataFrame()
     out["Conditions"] = [conditions_html(d, edges_by_feature) for d in df["description"]]
-    out["Pre-Index Bias"] = [pre_index_bias(a, f) for a, f in zip(df["n_all"], df["n_flagged"])]
+    out["Pre-Index Bias"] = [pre_index_bias(a, f) for a, f in zip(df["n_raw_all"], df["n_raw_flagged"])]
     out["Cases Found"] = df["n_all"].map(lambda n: f"{n:,.0f}" if pd.notna(n) else MISSING)
-    out["5-day Return"] = [dual(a, f, fmt_signed) for a, f in zip(df["mean_fwd_return_all"], df["mean_fwd_return_flagged"])]
-    out["5-day Baseline"] = [dual(a, f, fmt_signed) for a, f in zip(df["baseline_mean_all"], df["baseline_mean_flagged"])]
+    out[f"{horizon}-day Return"] = [dual(a, f, fmt_signed) for a, f in zip(df["mean_fwd_return_all"], df["mean_fwd_return_flagged"])]
+    out[f"{horizon}-day Baseline"] = [dual(a, f, fmt_signed) for a, f in zip(df["baseline_mean_all"], df["baseline_mean_flagged"])]
     out["Edge"] = [dual(a, f, fmt_signed) for a, f in zip(df["effect_all"], df["effect_flagged"])]
     out["vs. Best Single Condition"] = [dual_best_single(a, f) for a, f in
                                         zip(df["best_single_all"], df["best_single_flagged"])]
@@ -206,14 +207,15 @@ def humanize_pattern_view(df: pd.DataFrame, edges_by_feature: dict[str, list[flo
     return out
 
 
-def humanize_stock_view(df: pd.DataFrame, edges_by_feature: dict[str, list[float]] | None) -> pd.DataFrame:
+def humanize_stock_view(df: pd.DataFrame, edges_by_feature: dict[str, list[float]] | None,
+                        horizon: int = 5) -> pd.DataFrame:
     df = df.reset_index(drop=True)
     out = pd.DataFrame()
     out["Conditions"] = [conditions_html(d, edges_by_feature) for d in df["description"]]
     out["Pre-Index Bias"] = [pre_index_bias(a, f) for a, f in zip(df["n_all"], df["n_flagged"])]
     out["Cases for this stock"] = df["n_all"].map(lambda n: f"{n:,.0f}" if pd.notna(n) else MISSING)
-    out["5-day Return"] = [dual(a, f, fmt_signed) for a, f in zip(df["mean_fwd_return_all"], df["mean_fwd_return_flagged"])]
-    out["5-day Baseline"] = [dual(a, f, fmt_signed) for a, f in zip(df["baseline_mean_all"], df["baseline_mean_flagged"])]
+    out[f"{horizon}-day Return"] = [dual(a, f, fmt_signed) for a, f in zip(df["mean_fwd_return_all"], df["mean_fwd_return_flagged"])]
+    out[f"{horizon}-day Baseline"] = [dual(a, f, fmt_signed) for a, f in zip(df["baseline_mean_all"], df["baseline_mean_flagged"])]
     out["Edge"] = [dual(a, f, fmt_signed) for a, f in zip(df["edge_all"], df["edge_flagged"])]
     out["vs. Best Single Condition"] = [dual_best_single(a, f) for a, f in
                                         zip(df["best_single_all"], df["best_single_flagged"])]

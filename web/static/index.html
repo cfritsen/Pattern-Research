@@ -86,6 +86,11 @@
   #rowCount{color:var(--text-muted);font-size:0.85em;font-family:var(--font-sans)}
   #topN{width:70px}
   .controls{display:flex;align-items:center;gap:0.5em;flex-wrap:wrap;margin:0.75em 0}
+  .groupBadge{margin-left:0.6em;padding:0 0.5em;font-size:0.8em;cursor:pointer;color:var(--accent);background:none;border:1px solid var(--accent);border-radius:0}
+  .groupBadge:hover{color:var(--accent-hover);border-color:var(--accent-hover)}
+  .groupTag{margin-left:0.6em;font-size:0.8em;color:var(--text-muted);font-style:italic}
+  tr.groupMember td{background:rgba(176,130,68,0.07)}
+  tr.groupMember td:first-child{padding-left:1.6em}
   .emptyMsg td{text-align:left;color:var(--text-muted);padding:1em 0.75em}
   .placeholder{color:var(--text-muted);font-style:italic;margin-top:1em;font-family:var(--font-sans)}
   .textMuted{color:var(--text-muted);font-size:0.85em;font-family:var(--font-sans)}
@@ -222,6 +227,7 @@
 
     <div class="controls">
       <button id="viewToggle" type="button">View: All Data</button>
+      <label title="Patterns that fire on mostly the same days are shown as one row, with the others tucked under it. Nothing is removed: each pattern keeps its own numbers."><input id="groupToggle" type="checkbox" checked> Group similar patterns</label>
       <label>Show top <input id="topN" type="number" value="25" min="1"></label>
       <span id="status"></span>
     </div>
@@ -280,7 +286,7 @@
       <label>Sort by:
         <select id="psSortField">
           <option value="edge">Edge</option>
-          <option value="ret5">5-day Return</option>
+          <option value="ret5" id="psSortRetOpt">5-day Return</option>
           <option value="hit">Hit Rate</option>
           <option value="cases">Cases</option>
           <option value="ticker">Ticker</option>
@@ -378,6 +384,17 @@ function handleHashChange() {
 // Research no longer have their own index controls.
 // ========================================================================
 let currentIndex = 'sp500';
+// Horizon (bars) the saved results for the current index were computed with.
+// Labels follow this, not the Settings value, so they match the data on screen.
+let horizonDays = 5;
+async function loadHorizon() {
+  try {
+    const res = await fetch('/api/horizon?index=' + encodeURIComponent(currentIndex));
+    if (res.ok) horizonDays = (await res.json()).horizon || 5;
+  } catch (e) { /* keep the last known horizon */ }
+  const opt = document.getElementById('psSortRetOpt');
+  if (opt) opt.textContent = `${horizonDays}-day Return`;
+}
 
 // Friendly display names for index provider keys. Add an entry here
 // whenever a new index loader is added to PROVIDERS (universe_fetch.py) --
@@ -415,6 +432,7 @@ async function onNavIndexChange(e) {
     return;
   }
   currentIndex = newIndex;
+  await loadHorizon();
   clearMarketPattern();
   loadPatterns();
   loadWatchlist();
@@ -479,8 +497,8 @@ const OVERLAP_OPTS = [['above', 'Correlated'], ['below', 'Anti-correlated'], ['n
 const COLUMNS = [
   { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0, filter: 'range' },
-  { id: 'cases', label: 'Cases Found', numeric: true, get: r => currentView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt, filter: 'range' },
-  { id: 'ret5', label: '5-day Return', numeric: true, get: r => getViewField(r, 'mean_fwd_return'), fmt: fmtPctColored, filter: 'range' },
+  { id: 'cases', label: 'Cases Found', tip: 'Cases the statistics use: overlapping occurrences in the same stock (within one horizon of each other) count once.', numeric: true, get: r => currentView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt, filter: 'range' },
+  { id: 'ret5', get label() { return `${horizonDays}-day Return`; }, numeric: true, get: r => getViewField(r, 'mean_fwd_return'), fmt: fmtPctColored, filter: 'range' },
   { id: 'edge', label: 'Edge', numeric: true, get: r => getViewField(r, 'effect'), fmt: fmtPctColored, filter: 'range' },
   { id: 'best', label: 'vs. Best Single Condition', html: true, get: r => getViewField(r, 'best_single_html') },
   { id: 'fwd', label: 'Forward Test', numeric: true, get: r => getViewField(r, 'confirm_mean_fwd_return'), fmt: fmtPctColored, filter: 'range' },
@@ -633,10 +651,51 @@ function render() {
   rows = applyColumnFilters(rows);
   rows = applySort(rows);
   const topN = parseInt(document.getElementById('topN').value, 10) || 25;
-  const shown = rows.slice(0, topN);
-  document.getElementById('rowCount').textContent = `${shown.length} shown of ${rows.length} matching (of ${rawRows.length} total)`;
+  let groupedAway = 0;
+  if (document.getElementById('groupToggle').checked) {
+    const grouped = collapseGroups(rows);
+    groupedAway = rows.length - grouped.length;
+    rows = grouped;
+  }
+  const picked = rows.slice(0, topN);
+  const shown = [];
+  for (const r of picked) {
+    shown.push(r);
+    if (r._members && expandedClusters.has(r.cluster_id)) {
+      for (const m of r._members) shown.push(Object.assign({}, m, { _member: true }));
+    }
+  }
+  const groupNote = groupedAway > 0 ? `, ${groupedAway} similar grouped under another row` : '';
+  document.getElementById('rowCount').textContent =
+    `${picked.length} shown of ${rows.length} matching${groupNote} (of ${rawRows.length} total)`;
   renderBaseline();
   renderTable(shown);
+}
+
+// Patterns in the same similarity group (see clusters.py) collapse to the best-ranked
+// visible member under the current sort and filters; the rest are listed under it on request.
+const expandedClusters = new Set();
+function collapseGroups(sortedRows) {
+  const seen = new Map();
+  const out = [];
+  for (const r of sortedRows) {
+    if (r.cluster_id === null || r.cluster_id === undefined || r.cluster_size < 2) { out.push(r); continue; }
+    const rep = seen.get(r.cluster_id);
+    if (rep) { rep._members.push(r); continue; }
+    const copy = Object.assign({}, r, { _members: [] });
+    seen.set(r.cluster_id, copy);
+    out.push(copy);
+  }
+  return out;
+}
+
+function groupBadge(row) {
+  if (row._member) return '<span class="groupTag">similar pattern</span>';
+  if (row._members && row._members.length) {
+    const open = expandedClusters.has(row.cluster_id);
+    return `<button type="button" class="groupBadge" data-cluster="${row.cluster_id}">+${row._members.length} similar ${open ? '\u25B2' : '\u25BC'}</button>`;
+  }
+  return '';
 }
 
 document.getElementById('mrShowAll').addEventListener('click', () => {
@@ -714,7 +773,10 @@ function renderTable(rows) {
       : 'No patterns match the current filters.'}</td></tr>`;
   } else {
     for (const row of rows) {
-      html += '<tr>' + COLUMNS.map(c => `<td>${c.fmt ? c.fmt(c.get(row)) : c.get(row)}</td>`).join('') + '</tr>';
+      html += `<tr class="${row._member ? 'groupMember' : ''}">` + COLUMNS.map(c => {
+        const cell = c.fmt ? c.fmt(c.get(row)) : c.get(row);
+        return `<td>${cell}${c.id === 'cond' ? groupBadge(row) : ''}</td>`;
+      }).join('') + '</tr>';
     }
   }
   html += '</tbody></table>';
@@ -725,6 +787,13 @@ function renderTable(rows) {
       const id = el.dataset.col;
       sortState = sortState.col === id ? { col: id, ascending: !sortState.ascending } : { col: id, ascending: true };
       closePopovers();
+      render();
+    });
+  });
+  container.querySelectorAll('.groupBadge').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = parseInt(el.dataset.cluster, 10);
+      if (expandedClusters.has(id)) expandedClusters.delete(id); else expandedClusters.add(id);
       render();
     });
   });
@@ -743,6 +812,7 @@ document.addEventListener('click', e => {
 
 document.getElementById('filterInput').addEventListener('input', render);
 document.getElementById('topN').addEventListener('input', render);
+document.getElementById('groupToggle').addEventListener('change', render);
 document.getElementById('viewToggle').addEventListener('click', () => {
   currentView = currentView === 'all' ? 'flagged' : 'all';
   document.getElementById('viewToggle').textContent = `View: ${currentView === 'all' ? 'All Data' : 'Index-Only Data'}`;
@@ -1093,7 +1163,7 @@ const SR_MATCH_COLUMNS = [
       ? '<span class="badge confirmed">Stock-Confirmed</span>'
       : '<span class="badge marketwide">Market-Wide</span>' },
   { id: 'cases', label: 'Cases', numeric: true, get: r => r.n, fmt: fmtInt },
-  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r.mean_fwd_return, fmt: fmtPctColored },
+  { id: 'ret5', get label() { return `${horizonDays}-day Return`; }, numeric: true, get: r => r.mean_fwd_return, fmt: fmtPctColored },
   { id: 'edge', label: 'Edge', numeric: true, get: r => r.edge, fmt: fmtPctColored },
   { id: 'hit', label: 'Hit Rate', numeric: true, get: r => r.hit_rate, fmt: fmtPct0 },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
@@ -1109,7 +1179,7 @@ const SR_STOCK_COLUMNS = [
     get: r => r.is_live ? '<span class="badge confirmed">Live now</span>' : '' },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
   { id: 'cases', label: 'Cases for this stock', numeric: true, get: r => srView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt },
-  { id: 'ret5', label: '5-day Return', numeric: true, get: r => r[`mean_fwd_return_${srView}`], fmt: fmtPctColored },
+  { id: 'ret5', get label() { return `${horizonDays}-day Return`; }, numeric: true, get: r => r[`mean_fwd_return_${srView}`], fmt: fmtPctColored },
   { id: 'edge', label: 'Edge', numeric: true, get: r => r[`edge_${srView}`], fmt: fmtPctColored },
   { id: 'best', label: 'vs. Best Single Condition', html: true, get: r => {
       const o = r[`best_single_${srView}`];
@@ -1308,7 +1378,7 @@ function psRender() {
     return `<a class="watchlistCard" href="#stock-research?ticker=${r.ticker}" style="text-decoration:none;color:inherit;display:block">
       <div class="ticker">${r.ticker}</div>
       <div style="margin:4px 0">${confirmBadge}</div>
-      <div class="return">${fmtPctColored(r.mean_fwd_return)} 5-day return</div>
+      <div class="return">${fmtPctColored(r.mean_fwd_return)} ${horizonDays}-day return</div>
       <div class="textMuted">Edge: ${fmtPctColored(r.edge)}</div>
       <div class="textMuted">Hit Rate: ${fmtPct0(r.hit_rate)}</div>
       <div class="textMuted">Cases: ${fmtInt(r.n)}</div>
@@ -1348,7 +1418,7 @@ const DI_PATTERN_COLUMNS = [
   { id: 'cond', label: 'Conditions', html: true, get: r => r.conditions_html },
   { id: 'bias', label: 'Pre-Index Bias', numeric: true, get: r => r.pre_index_bias, fmt: fmtPct0 },
   { id: 'cases', label: 'Cases Found', numeric: true, get: r => diView === 'all' ? r.n_all : r.n_flagged, fmt: fmtInt },
-  { id: 'ret5', label: '5-day Return', numeric: true, get: r => getDiViewField(r, 'mean_fwd_return'), fmt: fmtPctColored },
+  { id: 'ret5', get label() { return `${horizonDays}-day Return`; }, numeric: true, get: r => getDiViewField(r, 'mean_fwd_return'), fmt: fmtPctColored },
   { id: 'edge', label: 'Edge', numeric: true, get: r => getDiViewField(r, 'effect'), fmt: fmtPctColored },
   { id: 'fdr', label: 'FDR', numeric: true, get: r => getDiViewField(r, 'q_value'), fmt: fmtPct0 },
   { id: 'stocks', label: 'Stocks Agreed', numeric: true, get: r => getDiViewField(r, 'breadth_stocks'), fmt: fmtPct0 },
@@ -1538,6 +1608,7 @@ window.addEventListener('hashchange', handleHashChange);
 (async function init() {
   await loadSettings();  // sets currentIndex as a side effect, before anything else fetches by index
   await populateNavIndexSelector();
+  await loadHorizon();
   handleHashChange();
   loadPatterns();
   loadWatchlist();

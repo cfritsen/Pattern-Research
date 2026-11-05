@@ -41,7 +41,7 @@ def build_pattern_context(conn) -> pd.DataFrame:
     placeholders = ",".join("?" for _ in ids)
     df = pd.read_sql(
         f"SELECT r.pattern_id, p.description, p.conditions_json, r.view, r.split, r.passed, "
-        f"r.n_occurrences, r.mean_fwd_return, r.baseline_mean, r.effect, r.q_value, "
+        f"r.n_occurrences, r.n_thinned, r.mean_fwd_return, r.baseline_mean, r.effect, r.q_value, "
         f"r.hit_rate, r.breadth_stocks, r.breadth_years, r.overlap_ratio, r.top3_year_share, "
         f"r.mean_excl_top3 "
         f"FROM pattern_results_pooled r JOIN patterns p ON p.pattern_id = r.pattern_id "
@@ -61,8 +61,14 @@ def build_pattern_context(conn) -> pd.DataFrame:
     merged = pd.DataFrame(index=common)
     merged["description"] = all_rows["description"].combine_first(flagged_rows["description"])
     merged["conditions_json"] = all_rows["conditions_json"].combine_first(flagged_rows["conditions_json"])
-    merged["n_all"] = all_rows["n_occurrences"]
-    merged["n_flagged"] = flagged_rows["n_occurrences"]
+    # n_all / n_flagged is the sample the statistics use (cases left after
+    # overlapping occurrences are thinned out). Results saved before n_thinned
+    # existed fall back to the raw count until the next Full Rediscovery.
+    # n_raw_* is the count before thinning; pre-index bias still uses it.
+    merged["n_raw_all"] = all_rows["n_occurrences"]
+    merged["n_raw_flagged"] = flagged_rows["n_occurrences"]
+    merged["n_all"] = all_rows["n_thinned"].fillna(all_rows["n_occurrences"])
+    merged["n_flagged"] = flagged_rows["n_thinned"].fillna(flagged_rows["n_occurrences"])
     passed_all = all_rows["passed"].fillna(0).astype(bool)
     passed_flagged = flagged_rows["passed"].fillna(0).astype(bool)
 
@@ -195,7 +201,19 @@ def direction_ok(row, view: str):
     return same_direction(effect, confirm - baseline)
 
 
-def to_api_rows(context: pd.DataFrame, edges_by_feature: dict) -> list[dict]:
+def load_clusters(conn) -> dict[int, dict]:
+    """pattern_id -> {cluster_id, is_lead, cluster_size, jaccard}; empty for
+    results saved before grouping existed (until the next Full Rediscovery)."""
+    try:
+        rows = conn.execute(
+            "SELECT pattern_id, cluster_id, is_lead, cluster_size, jaccard FROM pattern_clusters").fetchall()
+    except Exception:                                                   # noqa: BLE001
+        return {}
+    return {int(p): {"cluster_id": int(c), "is_lead": bool(l), "cluster_size": int(n), "jaccard": float(j)}
+            for p, c, l, n, j in rows}
+
+
+def to_api_rows(context: pd.DataFrame, edges_by_feature: dict, clusters: dict | None = None) -> list[dict]:
     """Every passed pattern, raw numbers for both views, nothing pre-dropped
     or pre-truncated -- the frontend sorts/filters/truncates all of it."""
     if context.empty:
@@ -207,12 +225,19 @@ def to_api_rows(context: pd.DataFrame, edges_by_feature: dict) -> list[dict]:
             "conditions_html": conditions_html(row["description"], edges_by_feature),
             "n_all": _clean(row["n_all"]),
             "n_flagged": _clean(row["n_flagged"]),
-            "pre_index_bias": _pre_index_bias_frac(row["n_all"], row["n_flagged"]),
+            "n_raw_all": _clean(row["n_raw_all"]),
+            "n_raw_flagged": _clean(row["n_raw_flagged"]),
+            "pre_index_bias": _pre_index_bias_frac(row["n_raw_all"], row["n_raw_flagged"]),
             "overlap_ratio": _clean(row["overlap_ratio"]),
             "top3_year_share": _clean(row["top3_year_share"]),
             "mean_excl_top3": _clean(row["mean_excl_top3"]),
             "reference_mean": _clean(row["reference_mean"]),
         }
+        cl = (clusters or {}).get(int(pid))
+        entry["cluster_id"] = cl["cluster_id"] if cl else None
+        entry["cluster_size"] = cl["cluster_size"] if cl else 1
+        entry["cluster_lead"] = cl["is_lead"] if cl else True
+        entry["cluster_jaccard"] = cl["jaccard"] if cl else None
         for view in ("all", "flagged"):
             entry[f"mean_fwd_return_{view}"] = _clean(row[f"mean_fwd_return_{view}"])
             entry[f"baseline_mean_{view}"] = _clean(row[f"baseline_mean_{view}"])

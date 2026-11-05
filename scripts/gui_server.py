@@ -9,7 +9,7 @@ from patternlab.config import (
     validate_config, ConfigError, VALID_HORIZONS,
 )
 from patternlab.db import connect
-from patternlab.reports import build_pattern_context, pattern_view, to_api_rows, stock_view, stock_to_api_rows, passes_direction_filter
+from patternlab.reports import load_clusters, build_pattern_context, pattern_view, to_api_rows, stock_view, stock_to_api_rows, passes_direction_filter
 from patternlab.humanize import badge_text, FEATURE_INFO, ALL_FEATURES, conditions_html
 from patternlab.universe_fetch import get_universe, get_index_proxy, PROVIDERS
 from patternlab.jobs import start_job, get_status, discovery_status, price_update_status, STAGES
@@ -95,6 +95,20 @@ def api_set_index():
     return jsonify({"status": "ok"})
 
 
+@app.get("/api/horizon")
+def api_horizon():
+    """Horizon (bars) the saved results for this index were computed with, so
+    labels match the data on screen even if Settings changed since the run."""
+    cfg0 = read_raw_config()
+    index = request.args.get("index", cfg0.get("index", "sp500"))
+    if index not in PROVIDERS:
+        return jsonify({"error": f"Unknown index {index!r}"}), 400
+    cfg = _cfg_for(index)
+    conn = connect(cfg)
+    row = conn.execute("SELECT horizon FROM pattern_results_pooled LIMIT 1").fetchone()
+    return jsonify({"horizon": int(row[0]) if row else int(cfg.get("horizon", 5))})
+
+
 @app.get("/api/patterns")
 def api_patterns():
     cfg0 = read_raw_config()
@@ -110,7 +124,7 @@ def api_patterns():
         edges_by_feature.setdefault(feat, []).append(val)
 
     context = build_pattern_context(conn)
-    return jsonify(to_api_rows(context, edges_by_feature))
+    return jsonify(to_api_rows(context, edges_by_feature, load_clusters(conn)))
 
 
 @app.get("/api/config")

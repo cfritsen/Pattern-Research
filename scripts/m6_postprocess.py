@@ -8,6 +8,7 @@ from patternlab.stats import thin_non_overlapping
 from patternlab.regime import year_breakdown
 from patternlab.by_stock import per_stock_breakdown
 from patternlab.db import connect
+from patternlab.clusters import pack, cluster_patterns, CLUSTER_JACCARD
 
 
 def condition_mask(buckets: pd.DataFrame, conditions: list[dict]) -> pd.Series:
@@ -29,6 +30,31 @@ def store_by_stock(conn, thin, h0, pattern_id, run_id, view, split):
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (int(pattern_id), int(run_id), ticker, view, h0, split,
              int(r["n"]), mean, hit, effect))
+
+
+def store_clusters(conn, buckets: pd.DataFrame, is_disc: pd.Series) -> None:
+    """Group passed patterns that fire on mostly the same days (reporting only;
+    see clusters.py). Uses the discovery-period, All Data occurrences."""
+    rows = conn.execute(
+        "SELECT p.pattern_id, p.conditions_json, MAX(ABS(r.effect)) "
+        "FROM pattern_results_pooled r JOIN patterns p ON p.pattern_id = r.pattern_id "
+        "WHERE r.split='discovery' AND r.passed=1 GROUP BY p.pattern_id").fetchall()
+    d = is_disc.to_numpy()
+    packed, strength = {}, {}
+    for pid, cj, eff in rows:
+        # a day with no bucket value (indicator warm-up) doesn't match the pattern
+        m = condition_mask(buckets, json.loads(cj)).fillna(False).to_numpy(dtype=bool) & d
+        packed[int(pid)] = pack(m[d])
+        strength[int(pid)] = 0.0 if eff is None else float(eff)
+    conn.execute("DELETE FROM pattern_clusters")
+    if packed:
+        cl = cluster_patterns(packed, strength, CLUSTER_JACCARD)
+        conn.executemany(
+            "INSERT INTO pattern_clusters (pattern_id, cluster_id, is_lead, cluster_size, jaccard) VALUES (?, ?, ?, ?, ?)",
+            [(int(r.pattern_id), int(r.cluster_id), int(r.is_lead), int(r.cluster_size), float(r.jaccard))
+             for r in cl.itertuples()])
+        print(f"Grouped {len(cl)} passed patterns into {cl['cluster_id'].nunique()} groups "
+              f"(overlap >= {CLUSTER_JACCARD:.0%} of days)")
 
 
 def main() -> None:
@@ -85,6 +111,8 @@ def main() -> None:
         keep_f = thin_non_overlapping(full_sub["bar_pos"], full_sub["ticker"], h0)
         full_thin = full_sub[keep_f]
         store_by_stock(conn, full_thin, h0, row["pattern_id"], row["run_id"], row["view"], "full")
+    conn.commit()
+    store_clusters(conn, buckets, is_disc)
     conn.commit()
     print("Done.")
 

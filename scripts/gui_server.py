@@ -9,10 +9,11 @@ from patternlab.config import (
     validate_config, ConfigError, VALID_HORIZONS, cost_for, DEFAULT_INDEX_COSTS,
 )
 from patternlab.db import connect
+from patternlab.stock_baselines import ensure_stock_baselines
 from patternlab.reports import load_clusters, build_pattern_context, pattern_view, to_api_rows, stock_view, stock_to_api_rows, passes_direction_filter
 from patternlab.humanize import badge_text, FEATURE_INFO, ALL_FEATURES, conditions_html
 from patternlab.universe_fetch import get_universe, get_index_proxy, PROVIDERS
-from patternlab.jobs import start_job, get_status, discovery_status, price_update_status, STAGES
+from patternlab.jobs import start_job, remove_queued, clear_results, get_status, discovery_status, price_update_status, STAGES
 from patternlab.watchlist import compute_watchlist, load_edges, compute_matching_table, matching_table_to_api_rows, compute_pattern_matches, compute_month_patterns_context, compute_month_stock_matches, compute_current_month_highlights
 from datetime import datetime
 from patternlab.market_insights import compute_market_insights
@@ -49,6 +50,8 @@ FIELD_METADATA = [
      "help": "Same, for mid-cap stocks (wider spreads, so a higher default)."},
     {"key": "cost_sp600", "label": "Trading cost: S&P 600", "type": "number", "min": 0, "step": 0.0001,
      "help": "Same, for small-cap stocks (widest spreads, so the highest default)."},
+    {"key": "cost_etfs", "label": "Trading cost: Curated ETFs", "type": "number", "min": 0, "step": 0.0001,
+     "help": "Same, for the curated ETFs (very liquid funds with tight spreads, so a low default)."},
     {"key": "corr_prune_threshold", "label": "Correlation prune threshold", "type": "number", "min": 0.01, "max": 0.99, "step": 0.01,
      "help": "Feature pairs with |Spearman correlation| above this are excluded from 2-condition testing."},
     {"key": "test_all_buckets", "label": "Test all buckets (full grid)", "type": "boolean",
@@ -194,10 +197,24 @@ def api_open_folder():
 @app.post("/api/jobs/start")
 def api_jobs_start():
     body = request.get_json() or {}
-    ok, msg = start_job(body.get("job"))
+    ok, msg = start_job(body.get("job"), body.get("indices"))
     if not ok:
         return jsonify({"error": msg}), 409
-    return jsonify({"status": "started"})
+    return jsonify({"status": msg})
+
+
+@app.post("/api/jobs/results/clear")
+def api_jobs_results_clear():
+    clear_results()
+    return jsonify({"status": "cleared"})
+
+
+@app.post("/api/jobs/queue/remove")
+def api_jobs_queue_remove():
+    pos = (request.get_json() or {}).get("position")
+    if not isinstance(pos, int) or not remove_queued(pos):
+        return jsonify({"error": "Nothing at that queue position."}), 404
+    return jsonify({"status": "removed"})
 
 
 @app.get("/api/jobs/status")
@@ -244,6 +261,7 @@ def api_stock_research():
     # already apply -- without it, Per Stock showed patterns that had
     # already been excluded everywhere else (confirm-period reversals).
     kept = context[context.apply(passes_direction_filter, axis=1)] if not context.empty else context
+    ensure_stock_baselines(cfg, uni, conn)
     sdf = stock_view(conn, ticker, kept, top_n=100000, cost=cost)
 
     live_matches = compute_watchlist(cfg, uni, conn, only_ticker=ticker)

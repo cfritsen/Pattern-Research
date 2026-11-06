@@ -67,5 +67,6 @@ def test_cost_nets_edge_and_hides_results_within_it(tmp_path):
     ctx = build_pattern_context(conn, cost=0.002)
     r = ctx.iloc[0]
     assert abs(r["effect_all"] - 0.008) < 1e-12 and abs(r["effect_flagged"] - 0.008) < 1e-12
-    assert abs(r["mean_fwd_return_all"] - 0.01) < 1e-12          # Return stays gross
+    assert abs(r["mean_fwd_return_all"] - 0.008) < 1e-12         # Return is net of cost too
+    assert abs((r["mean_fwd_return_all"] - r["baseline_mean_all"]) - r["effect_all"]) < 1e-12   # Edge = Return - Baseline
     assert build_pattern_context(conn, cost=0.02).empty is True or len(build_pattern_context(conn, cost=0.02)) == 0

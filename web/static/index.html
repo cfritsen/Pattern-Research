@@ -191,11 +191,20 @@
       <div id="dashboardLeft">
         <h1>Dashboard</h1>
         <div id="discoveryBanner" class="note"></div>
-        <div class="controls">
-          <button id="updateDataBtn" type="button">Update Price Data</button>
-          <button id="fullRediscoveryBtn" type="button">Full Rediscovery</button>
-        </div>
         <div id="jobProgress"></div>
+        <div class="sectionBox" id="queueBox">
+          <h2>Run queue</h2>
+          <div class="textMuted">Runs go one at a time, in order, each on its own index. The queue is lost if the app is closed.</div>
+          <div class="controls" style="margin-top:.5em">
+            <select id="queueJob">
+              <option value="update_data">Update Price Data</option>
+              <option value="full_rediscovery">Full Rediscovery</option>
+            </select>
+            <span id="queueIndices"></span>
+            <button id="queueAddBtn" type="button">Add to queue</button>
+          </div>
+          <div id="queueList"></div>
+        </div>
 
         <div class="sectionBox">
           <h2>Market Insights</h2>
@@ -409,6 +418,7 @@ const INDEX_LABELS = {
   sp500: 'S&P 500 Large Cap',
   sp400: 'S&P 400 Mid Cap',
   sp600: 'S&P 600 Small Cap',
+  etfs: 'Curated ETFs',
 };
 
 async function populateNavIndexSelector() {
@@ -835,7 +845,7 @@ const DEFAULT_CONFIG = {
   index: "sp500", start_date: "1996-01-01", use_stooq_fallback: true,
   jump_threshold: 0.25, pause_seconds: 0.5,
   start_overrides: { JCI: "2007-07-02" },
-  horizon: 5, move_atr: 1.0, discovery_frac: 0.70, cost_sp500: 0.001, cost_sp400: 0.002, cost_sp600: 0.003,
+  horizon: 5, move_atr: 1.0, discovery_frac: 0.70, cost_sp500: 0.001, cost_sp400: 0.002, cost_sp600: 0.003, cost_etfs: 0.0005,
   corr_prune_threshold: 0.7, test_all_buckets: false, multithreading: false,
   disabled_features: [],
 };
@@ -1020,10 +1030,10 @@ function renderDiscoveryBanner(priceUpdate, d) {
 
 function renderJobProgress(status) {
   const box = document.getElementById('jobProgress');
-  const btns = [document.getElementById('updateDataBtn'), document.getElementById('fullRediscoveryBtn')];
 
   if (previousJobStatus === 'running' && status.status === 'done') {
     successVisible = true;
+    loadHorizon();
     loadPatterns();
     loadWatchlist();
     loadMarketInsights();
@@ -1033,7 +1043,6 @@ function renderJobProgress(status) {
   previousJobStatus = status.status;
 
   if (status.status === 'running') {
-    btns.forEach(b => b.disabled = true);
     const stages = status.stages_meta.filter(s => status.stage_ids.includes(s.id));
     const idx = status.current_index;
     if (lastRenderedMode !== 'running') {
@@ -1043,24 +1052,24 @@ function renderJobProgress(status) {
           &nbsp;|&nbsp; Total elapsed: <span id="totalElapsed"></span></div>`;
       lastRenderedMode = 'running';
     }
-    document.getElementById('stageLabel').textContent = stages[idx].label;
+    const jobOn = INDEX_LABELS[status.job_index] || status.job_index;
+    document.getElementById('stageLabel').textContent = `${JOB_LABELS[status.job_name] || status.job_name} on ${jobOn}: ${stages[idx].label}`;
     const prog = status.stage_progress;
     document.getElementById('stageCount').textContent = prog
       ? `stage ${idx + 1} of ${stages.length} -- ${Math.floor((prog.done / prog.total) * 100)}%`
       : `stage ${idx + 1} of ${stages.length}`;
     document.getElementById('stageElapsed').textContent = fmtElapsed(status.stage_started_at);
     document.getElementById('totalElapsed').textContent = fmtElapsed(status.started_at);
-  } else if (status.status === 'error') {
-    btns.forEach(b => b.disabled = false);
+  } else if (status.status === 'error' && !status.active) {
     box.innerHTML = `<div class="configErrors"><b>Job failed:</b><pre style="white-space:pre-wrap">${status.error}</pre></div>`;
     lastRenderedMode = 'error';
-  } else if (status.status === 'done' && successVisible) {
-    btns.forEach(b => b.disabled = false);
-    const label = JOB_LABELS[status.job_name] || status.job_name;
-    box.innerHTML = `<div class="successMsg">${label} completed successfully.</div>`;
+  } else if (status.status === 'done' && successVisible && !status.active) {
+    const anyFailed = (status.results || []).some(r => r.status === 'error');
+    box.innerHTML = anyFailed
+      ? `<div class="textMuted">Queued jobs finished; some failed (see below).</div>`
+      : `<div class="successMsg">Queued jobs completed successfully.</div>`;
     lastRenderedMode = 'done';
   } else {
-    btns.forEach(b => b.disabled = false);
     box.innerHTML = '';
     lastRenderedMode = 'idle';
   }
@@ -1071,19 +1080,66 @@ async function pollJobStatus() {
   const status = await res.json();
   renderDiscoveryBanner(status.price_update, status.discovery);
   renderJobProgress(status);
+  renderQueue(status);
 }
 
-async function startJob(jobName) {
+function buildQueueIndexChecks() {
+  document.getElementById('queueIndices').innerHTML = Object.entries(INDEX_LABELS).map(([k, label]) =>
+    `<label style="font-weight:normal;margin-right:.8em"><input type="checkbox" class="queueIdx" value="${k}" checked> ${label}</label>`).join('');
+}
+
+function renderQueue(status) {
+  const jobName = j => JOB_LABELS[j] || j;
+  const idxName = i => INDEX_LABELS[i] || i;
+  const queue = status.queue || [];
+  const results = (status.results || []).slice().reverse();
+  const parts = [];
+  if (queue.length) {
+    parts.push('<div style="margin-top:.6em"><b>Waiting</b></div>' + queue.map((q, i) =>
+      `<div>${i + 1}. ${jobName(q.job_name)} on ${idxName(q.index)}
+        <a href="#" class="queueRemove" data-pos="${i}">remove</a></div>`).join(''));
+  }
+  if (results.length) {
+    parts.push('<div style="margin-top:.6em"><b>Finished this session</b> <a href="#" id="queueClear">clear</a></div>' + results.map(r =>
+      r.status === 'done'
+        ? `<div>&#10003; ${jobName(r.job_name)} on ${idxName(r.index)} <span class="textMuted">${new Date(r.finished_at).toLocaleTimeString()}</span></div>`
+        : `<div style="color:#b00020">&#10007; ${jobName(r.job_name)} on ${idxName(r.index)} failed
+            <details><summary class="textMuted">details</summary><pre style="white-space:pre-wrap">${r.error}</pre></details></div>`).join(''));
+  }
+  const html = parts.join('');
+  const box = document.getElementById('queueList');
+  if (box.dataset.html !== html) {
+    box.dataset.html = html;
+    box.innerHTML = html;
+    const clr = document.getElementById('queueClear');
+    if (clr) clr.addEventListener('click', async e => {
+      e.preventDefault();
+      await fetch('/api/jobs/results/clear', { method: 'POST' });
+      pollJobStatus();
+    });
+    box.querySelectorAll('.queueRemove').forEach(a => a.addEventListener('click', async e => {
+      e.preventDefault();
+      await fetch('/api/jobs/queue/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ position: parseInt(a.dataset.pos, 10) }) });
+      pollJobStatus();
+    }));
+  }
+}
+
+async function addToQueue() {
+  const indices = [...document.querySelectorAll('.queueIdx:checked')].map(c => c.value);
+  if (!indices.length) { alert('Tick at least one index to queue.'); return; }
   const res = await fetch('/api/jobs/start', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job: jobName }),
+    body: JSON.stringify({ job: document.getElementById('queueJob').value, indices }),
   });
   if (!res.ok) alert((await res.json()).error);
+  document.querySelectorAll('.queueIdx').forEach(c => c.checked = true);     // back to the default: all ticked
   pollJobStatus();
 }
+buildQueueIndexChecks();
+document.getElementById('queueAddBtn').addEventListener('click', addToQueue);
 
-document.getElementById('updateDataBtn').addEventListener('click', () => startJob('update_data'));
-document.getElementById('fullRediscoveryBtn').addEventListener('click', () => startJob('full_rediscovery'));
 setInterval(pollJobStatus, 1000);
 
 // ========================================================================
@@ -1235,7 +1291,7 @@ function srRenderBaseline() {
   const box = document.getElementById('srBaselineDisplay');
   const source = srAllRows.length ? srAllRows : srMatchRows;
   const row = source.find(r => r[`baseline_mean_${srView}`] != null);
-  box.textContent = row ? `Baseline (${srView === 'all' ? 'All Data' : 'Index-Only Data'}): ${fmtPct(row[`baseline_mean_${srView}`])}` : '';
+  box.textContent = row ? `This stock's own baseline (${srView === 'all' ? 'All Data' : 'Index-Only Data'}): ${fmtPct(row[`baseline_mean_${srView}`])}` : '';
 }
 
 function srApplyTextFilter(rows, inputId) {

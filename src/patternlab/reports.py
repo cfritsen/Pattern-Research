@@ -16,6 +16,15 @@ def net_edge(effect, cost):
     return float(np.sign(effect) * max(abs(effect) - cost, 0.0))
 
 
+def net_return(mean_return, direction_value, cost):
+    """Return net of cost: a bullish result (direction_value >= 0) loses the cost, a
+    bearish one gains it back (the short's cost comes off its fall). direction_value is
+    the Edge (or any number whose sign is the result's direction)."""
+    if pd.isna(mean_return) or pd.isna(direction_value):
+        return mean_return
+    return float(mean_return - (1.0 if direction_value >= 0 else -1.0) * cost)
+
+
 def load_single_condition_lookup(conn, cost: float = 0.0) -> dict:
     df = pd.read_sql(
         "SELECT p.conditions_json, r.view, r.effect FROM pattern_results_pooled r "
@@ -102,6 +111,9 @@ def build_pattern_context(conn, cost: float = 0.0) -> pd.DataFrame:
             for col in ["mean_fwd_return", "baseline_mean", "effect", "confirm_mean_fwd_return",
                         "q_value", "hit_rate", "breadth_stocks", "breadth_years"]:
                 merged.loc[within, f"{col}_{view}"] = np.nan
+            # Return and Edge are both shown net of cost (Edge = Return - Baseline still holds)
+            merged[f"mean_fwd_return_{view}"] = [
+                net_return(r, e, cost) for r, e in zip(merged[f"mean_fwd_return_{view}"], merged[f"effect_{view}"])]
             merged[f"effect_{view}"] = merged[f"effect_{view}"].map(lambda e: net_edge(e, cost))
         merged = merged[merged[["effect_all", "effect_flagged"]].notna().any(axis=1)]
 
@@ -188,8 +200,14 @@ def stock_view(conn, ticker: str, context: pd.DataFrame, top_n: int, cost: float
     out["hit_rate_flagged"] = flagged_rows["hit_rate"]
     out["stock_effect_all"] = all_rows["effect"]
     out["stock_effect_flagged"] = flagged_rows["effect"]
-    out["baseline_mean_all"] = ctx["baseline_mean_all"]
-    out["baseline_mean_flagged"] = ctx["baseline_mean_flagged"]
+    # The stock's own baseline (its average forward return over all its days); the
+    # market-wide baseline only where the stock has too little history for its own.
+    from patternlab.stock_baselines import load_stock_baselines
+    own = load_stock_baselines(conn, ticker)
+    out["baseline_mean_all"] = own.get((ticker, "all"), np.nan)
+    out["baseline_mean_flagged"] = own.get((ticker, "flagged"), np.nan)
+    out["baseline_mean_all"] = out["baseline_mean_all"].fillna(ctx["baseline_mean_all"])
+    out["baseline_mean_flagged"] = out["baseline_mean_flagged"].fillna(ctx["baseline_mean_flagged"])
     out["edge_all"] = out["mean_fwd_return_all"] - out["baseline_mean_all"]
     out["edge_flagged"] = out["mean_fwd_return_flagged"] - out["baseline_mean_flagged"]
     if cost > 0:
@@ -202,6 +220,8 @@ def stock_view(conn, ticker: str, context: pd.DataFrame, top_n: int, cost: float
             for col in ["n", "mean_fwd_return", "hit_rate", "stock_effect", "edge"]:
                 name = f"{col}_{view}" if col != "stock_effect" else f"stock_effect_{view}"
                 out.loc[within, name] = np.nan
+            out[f"mean_fwd_return_{view}"] = [
+                net_return(r, e, cost) for r, e in zip(out[f"mean_fwd_return_{view}"], out[f"edge_{view}"])]
             out[f"edge_{view}"] = out[f"edge_{view}"].map(lambda e: net_edge(e, cost))
         gone = (hid["all"] | hid["flagged"]) & out[["edge_all", "edge_flagged"]].isna().all(axis=1)
         out = out[~gone]

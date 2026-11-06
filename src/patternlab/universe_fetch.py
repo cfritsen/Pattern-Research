@@ -72,11 +72,40 @@ def fetch_sp600() -> pd.DataFrame:
     return _fetch_wiki_no_join_dates(WIKI_SP600)
 
 
-PROVIDERS = {"sp500": fetch_sp500, "sp400": fetch_sp400, "sp600": fetch_sp600}   # add other indices or a paid provider here
+# The curated ETF list is a file the owner maintains: the newest
+# data/universe/etf_candidates_*.csv (columns ticker, group, category, fundFamily, ...).
+# To change the list, add a newer-dated file. The index key is "etfs" (not "etf") so the
+# saved snapshots, etfs_<date>.csv, cannot be mistaken for those files.
+ETF_LIST_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "universe"
+
+
+def fetch_etfs(folder: Path | None = None) -> pd.DataFrame:
+    files = sorted((folder or ETF_LIST_DIR).glob("etf_candidates_*.csv"))
+    if not files:
+        raise RuntimeError(f"No curated ETF list found: expected etf_candidates_<date>.csv in {folder or ETF_LIST_DIR}")
+    src = pd.read_csv(files[-1])
+    need = ["ticker", "group"]
+    if any(c not in src.columns for c in need):
+        raise RuntimeError(f"{files[-1].name} must have columns {need}")
+    cat = src["category"].fillna("") if "category" in src.columns else ""
+    fam = src["fundFamily"].fillna("") if "fundFamily" in src.columns else ""
+    # ETFs have no index join dates, so date_added is empty and Index-Only equals All Data.
+    df = pd.DataFrame({
+        "ticker": src["ticker"].astype(str).str.strip(),
+        "company": (cat + " (" + fam + ")") if "category" in src.columns else src["ticker"].astype(str),
+        "sector": src["group"].astype(str).str.strip(),
+        "date_added": pd.NaT,
+    })
+    df["data_ticker"] = df["ticker"].map(to_data_ticker)
+    return df
+
+
+PROVIDERS = {"sp500": fetch_sp500, "sp400": fetch_sp400, "sp600": fetch_sp600,
+             "etfs": fetch_etfs}   # add other indices or a paid provider here
 
 # Acceptable constituent count per index; a count outside this range means the
 # source page changed or was scraped wrong. Indices not listed use (450, 520).
-EXPECTED_COUNTS = {"sp500": (450, 520), "sp400": (380, 420), "sp600": (570, 630)}
+EXPECTED_COUNTS = {"sp500": (450, 520), "sp400": (380, 420), "sp600": (570, 630), "etfs": (60, 90)}
 
 # The benchmark ticker used per index for relative-strength features (M2).
 # Add an entry here whenever a new index loader is added to PROVIDERS.
@@ -84,6 +113,7 @@ INDEX_PROXIES = {
     "sp500": "SPY",
     "sp400": "MDY",         # SPDR S&P MidCap 400 ETF (history back to 1995)
     "sp600": "IJR",         # iShares Core S&P Small-Cap ETF (history back to 2000)
+    "etfs": "SPY",          # the broad US market, as the benchmark for the curated ETFs
 }
 
 def get_index_proxy(index: str) -> str:

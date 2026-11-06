@@ -3,6 +3,8 @@ import pandas as pd
 from patternlab.config import load_config, ensure_dirs, report_dir_for, cost_for
 from patternlab.db import connect
 from patternlab.reports import build_pattern_context, pattern_view, stock_view
+from patternlab.stock_baselines import ensure_stock_baselines
+from patternlab.universe_fetch import get_universe
 from patternlab.humanize import humanize_pattern_view, humanize_stock_view
 
 DISCLAIMER = ("This report shows historical statistical patterns in price data. It is "
@@ -65,6 +67,8 @@ def main() -> None:
     context = build_pattern_context(conn, cost)
     pdf = pattern_view(context, args.top)
     wdf = pattern_view(context, args.top, worst=True)
+    if args.ticker:
+        ensure_stock_baselines(cfg, get_universe(cfg), conn)
     sdf = stock_view(conn, args.ticker, context, 5, cost) if args.ticker else pd.DataFrame()
 
     out_dir = report_dir_for(cfg)

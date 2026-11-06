@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import re
 from pathlib import Path
 import yaml
@@ -9,7 +10,7 @@ VALID_HORIZONS = (1, 5, 10, 20, 63, 126, 252)
 # Judgment-based starting points: wider bid/ask spreads and more price impact as
 # companies get smaller. Override per index with `index_costs` in config.yaml or
 # on the Settings page. `cost` is only the fallback for an index with no entry here.
-DEFAULT_INDEX_COSTS = {"sp500": 0.001, "sp400": 0.002, "sp600": 0.003}
+DEFAULT_INDEX_COSTS = {"sp500": 0.001, "sp400": 0.002, "sp600": 0.003, "etfs": 0.0005}
 
 
 def cost_for(cfg: dict) -> float:
@@ -34,7 +35,14 @@ class ConfigError(ValueError):
     problem found, not just the first, so a form can show them all at once."""
 
 
+# A running job sets this to its own frozen copy of the settings (see jobs.py), so
+# changing the index or saving Settings in the GUI cannot change a job that is
+# already running. Unset means: read config.yaml as usual.
+JOB_CONFIG_ENV = "PATTERNLAB_CONFIG"
+
+
 def load_config(path: str = "config.yaml") -> dict:
+    path = os.environ.get(JOB_CONFIG_ENV) or path
     cfg = read_raw_config(path)
     validate_config(cfg, path)
     return cfg

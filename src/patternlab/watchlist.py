@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 from patternlab.buckets import CATEGORICAL
 from patternlab.config import cost_for
-from patternlab.reports import build_pattern_context, passes_direction_filter
+from patternlab.reports import build_pattern_context, passes_direction_filter, net_return, net_edge
+from patternlab.stock_baselines import ensure_stock_baselines, load_stock_baselines
 from patternlab.humanize import badge_text, conditions_html
 
 
@@ -115,6 +116,7 @@ def load_stock_stats(conn, pattern_ids: set[int], ticker_filter: str | None = No
     df = pd.read_sql(query, conn, params=params)
     df = df.dropna(subset=["mean_fwd_return"])
 
+    own = load_stock_baselines(conn, ticker_filter)
     out = {}
     for ticker, pid, view, n, mfr, hr, eff in zip(
             df["ticker"], df["pattern_id"], df["view"], df["n"],
@@ -123,6 +125,7 @@ def load_stock_stats(conn, pattern_ids: set[int], ticker_filter: str | None = No
             "n": int(n), "mean_fwd_return": float(mfr),
             "hit_rate": None if pd.isna(hr) else float(hr),
             "effect": float(eff),
+            "baseline": own.get((ticker, view)),       # the stock's own baseline; None = use the market's
         }
     return out
 
@@ -134,9 +137,21 @@ def stock_agrees(stats, prow, view, cost: float = 0.0) -> bool:
     be larger than the trading cost, bullish or bearish; otherwise it is hidden."""
     if not stats:
         return True
-    if (stats["mean_fwd_return"] >= 0) != (float(prow[f"effect_{view}"]) >= 0):
+    effect = float(prow[f"effect_{view}"])
+    if (net_return(stats["mean_fwd_return"], effect, cost) >= 0) != (effect >= 0):
         return False
-    return abs(stats["mean_fwd_return"] - float(prow[f"baseline_mean_{view}"])) > cost
+    base = stats.get("baseline")
+    if base is None:
+        base = float(prow[f"baseline_mean_{view}"])
+    return abs(stats["mean_fwd_return"] - base) > cost
+
+
+def stock_edge(stats, prow, view, cost: float) -> float:
+    """A stock's Edge net of cost: its mean after the pattern minus its own baseline."""
+    base = stats.get("baseline")
+    if base is None:
+        base = float(prow[f"baseline_mean_{view}"])
+    return net_edge(stats["mean_fwd_return"] - base, cost)
 
 
 def compute_watchlist(cfg: dict, uni: pd.DataFrame, conn, only_ticker: str | None = None) -> list[dict]:
@@ -146,6 +161,7 @@ def compute_watchlist(cfg: dict, uni: pd.DataFrame, conn, only_ticker: str | Non
     if context.empty:
         return []
     kept = context[context.apply(passes_direction_filter, axis=1)]
+    ensure_stock_baselines(cfg, uni, conn)
 
     edges_by_feature = load_edges(conn)
     snapshot = get_snapshot(cfg, uni)
@@ -177,7 +193,7 @@ def compute_watchlist(cfg: dict, uni: pd.DataFrame, conn, only_ticker: str | Non
                     "view": view,
                     "description": prow["description"],
                     "conditions": conditions,
-                    "historical_return": stats["mean_fwd_return"] if stats else market_return,
+                    "historical_return": net_return(stats["mean_fwd_return"], float(prow[f"effect_{view}"]), cost) if stats else market_return,
                     "return_source": "stock" if stats else "market",
                     # the pattern's direction: its market-wide Edge below / above the baseline
                     "direction": "bearish" if float(prow[f"effect_{view}"]) < 0 else "bullish",
@@ -198,6 +214,7 @@ def compute_matching_table(cfg: dict, uni: pd.DataFrame, conn, ticker: str) -> l
     if context.empty:
         return []
     kept = context[context.apply(passes_direction_filter, axis=1)]
+    ensure_stock_baselines(cfg, uni, conn)
     edges_by_feature = load_edges(conn)
     bucketed = bucket_snapshot(row_frame, edges_by_feature)
 
@@ -223,8 +240,8 @@ def compute_matching_table(cfg: dict, uni: pd.DataFrame, conn, ticker: str) -> l
                 "confirmed": confirmed,
                 "description": prow["description"],
                 "n": stats["n"] if confirmed else (None if pd.isna(market_n) else int(market_n)),
-                "mean_fwd_return": stats["mean_fwd_return"] if confirmed else float(prow[f"mean_fwd_return_{view}"]),
-                "edge": stats["effect"] if confirmed else float(prow[f"effect_{view}"]),
+                "mean_fwd_return": net_return(stats["mean_fwd_return"], float(prow[f"effect_{view}"]), cost) if confirmed else float(prow[f"mean_fwd_return_{view}"]),
+                "edge": stock_edge(stats, prow, view, cost) if confirmed else float(prow[f"effect_{view}"]),
                 "hit_rate": stats["hit_rate"] if confirmed else (
                     None if pd.isna(prow[f"hit_rate_{view}"]) else float(prow[f"hit_rate_{view}"])),
                 "pre_index_bias": None if pd.isna(prow["n_raw_all"]) or pd.isna(prow["n_raw_flagged"]) or prow["n_raw_all"] == 0
@@ -264,6 +281,7 @@ def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int)
     bucketed = bucket_snapshot(snapshot, edges_by_feature)
     matching_tickers = matches_for_conditions(bucketed, conditions)
 
+    ensure_stock_baselines(cfg, uni, conn)
     stock_stats = load_stock_stats(conn, {pattern_id})
 
     rows = []
@@ -281,8 +299,8 @@ def compute_pattern_matches(cfg: dict, uni: pd.DataFrame, conn, pattern_id: int)
                 "view": view,
                 "confirmed": confirmed,
                 "n": stats["n"] if confirmed else (None if pd.isna(market_n) else int(market_n)),
-                "mean_fwd_return": stats["mean_fwd_return"] if confirmed else float(prow[f"mean_fwd_return_{view}"]),
-                "edge": stats["effect"] if confirmed else float(prow[f"effect_{view}"]),
+                "mean_fwd_return": net_return(stats["mean_fwd_return"], float(prow[f"effect_{view}"]), cost) if confirmed else float(prow[f"mean_fwd_return_{view}"]),
+                "edge": stock_edge(stats, prow, view, cost) if confirmed else float(prow[f"effect_{view}"]),
                 "hit_rate": stats["hit_rate"] if confirmed else (
                     None if pd.isna(prow[f"hit_rate_{view}"]) else float(prow[f"hit_rate_{view}"])),
             })
@@ -323,7 +341,7 @@ def compute_month_stock_matches(conn, month: int, cost: float = 0.0) -> list[dic
             "view": view,
             "badge": badge,
             "n": stats["n"],
-            "historical_return": stats["mean_fwd_return"],
+            "historical_return": net_return(stats["mean_fwd_return"], prow[f"effect_{view}"], cost),
             "hit_rate": stats["hit_rate"],
         })
     return matches

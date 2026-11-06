@@ -67,6 +67,17 @@ CREATE TABLE IF NOT EXISTS pattern_results_by_stock (
     effect REAL
 );
 
+-- NOTE: connect() splits this script on semicolons, so no comment may contain one.
+CREATE TABLE IF NOT EXISTS stock_baselines (
+    ticker TEXT NOT NULL,
+    view TEXT NOT NULL,
+    horizon INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    mean_fwd_return REAL,          -- the stock's own average forward return, NULL when it has too little history
+    source_mtime REAL,             -- newest outcome file used, a newer one triggers a rebuild
+    PRIMARY KEY (ticker, view)
+);
+
 CREATE TABLE IF NOT EXISTS pattern_clusters (
     pattern_id INTEGER PRIMARY KEY REFERENCES patterns(pattern_id),
     cluster_id INTEGER NOT NULL,      -- the lead pattern's pattern_id
